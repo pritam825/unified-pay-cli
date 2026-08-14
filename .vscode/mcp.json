@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "pay-cli": {
+      "command": "node",
+      "args": ["${workspaceFolder}/dist/bin/pay.js", "mcp"]
+    }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "name": "unified-pay-cli",
+  "version": "0.1.0",
+  "description": "Unified Payment Gateway CLI & MCP Bridge for Stripe, Razorpay and more",
+  "type": "module",
+  "bin": {
+    "pay": "./dist/bin/pay.js"
+  },
+  "main": "./dist/bin/pay.js",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "cli",
+    "mcp",
+    "payments",
+    "stripe",
+    "razorpay",
+    "model-context-protocol",
+    "copilot"
+  ],
+  "author": "Pritam Kumar",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "chalk": "^6.0.0",
+    "commander": "^15.0.0",
+    "conf": "^15.1.0",
+    "inquirer": "^14.0.2",
+    "ora": "^9.4.1",
+    "razorpay": "^2.9.8",
+    "stripe": "^22.5.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/inquirer": "^9.0.10",
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2"
+  }
+}
