@@ -1,6 +1,6 @@
 {
   "name": "unified-pay-cli",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Unified Payment Gateway CLI & MCP Bridge for Stripe, Razorpay and more",
   "type": "module",
   "bin": {
