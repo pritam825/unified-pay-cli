@@ -1,5 +1,6 @@
 import { CreatePaymentLinkOptions } from "./CreatePaymentLinkOptions.js";
 import { PaymentLinkResult } from "./PaymentLinkResult.js";
+import { RefundDetails } from "./RefundDetails.js";
 import { RefundOptions } from "./RefundOptions.js";
 import { RefundResult } from "./RefundResult.js";
 import { Transaction } from "./Transaction.js";
@@ -10,4 +11,6 @@ export interface PaymentProvider {
   listTransactions(limit?: number): Promise<Transaction[]>;
   getPaymentStatus(paymentId: string): Promise<Transaction>;
   createRefund(options: RefundOptions): Promise<RefundResult>;
+  getRefundStatus(refundId: string): Promise<RefundDetails>;
+  listRefunds(limit?: number): Promise<RefundDetails[]>;
 }

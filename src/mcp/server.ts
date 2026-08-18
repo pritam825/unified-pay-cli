@@ -80,6 +80,30 @@ export function startMCPServer() {
             required: ['provider', 'paymentId'],
           },
         },
+        {
+          name: 'get_refund_status',
+          description: 'Retrieve live status and processing progression for a refund ID (e.g. rfnd_xxx, re_xxx)',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              provider: { type: 'string', enum: ['stripe', 'razorpay'] },
+              refundId: { type: 'string', description: 'Refund ID (e.g., rfnd_TRNTRFvhQ6NDKx or re_123)' },
+            },
+            required: ['provider', 'refundId'],
+          },
+        },
+        {
+          name: 'list_refunds',
+          description: 'List recent refunds from Stripe or Razorpay',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              provider: { type: 'string', enum: ['stripe', 'razorpay'] },
+              limit: { type: 'number', description: 'Number of refunds to fetch (default: 5)' },
+            },
+            required: ['provider'],
+          },
+        }
       ],
     };
   });
@@ -114,6 +138,16 @@ export function startMCPServer() {
           amount: args.amount,
         });
         return { content: [{ type: 'text', text: JSON.stringify(refund, null, 2) }] };
+      }
+
+      if (name === 'get_refund_status') {
+        const status = await adapter.getRefundStatus(args.refundId);
+        return { content: [{ type: 'text', text: JSON.stringify(status, null, 2) }] };
+      }
+
+      if (name === 'list_refunds') {
+        const refunds = await adapter.listRefunds(args.limit || 5);
+        return { content: [{ type: 'text', text: JSON.stringify(refunds, null, 2) }] };
       }
 
       throw new Error(`Unknown tool: ${name}`);
