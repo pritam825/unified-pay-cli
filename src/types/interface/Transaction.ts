@@ -4,4 +4,5 @@ export interface Transaction {
   currency: string;
   status: string;
   createdAt: string;
+  description?: string;
 }

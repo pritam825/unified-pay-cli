@@ -1,6 +1,6 @@
 {
   "name": "unified-pay-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Unified Payment Gateway CLI & MCP Bridge for Stripe, Razorpay and more",
   "type": "module",
   "bin": {
@@ -13,8 +13,10 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc",
-    "prepublishOnly": "npm run build"
+  "build": "tsc",
+  "test": "vitest run",
+  "test:watch": "vitest",
+  "prepublishOnly": "npm run build"
   },
   "keywords": [
     "cli",
@@ -41,6 +43,7 @@
   "devDependencies": {
     "@types/inquirer": "^9.0.10",
     "@types/node": "^26.2.0",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
   }
 }

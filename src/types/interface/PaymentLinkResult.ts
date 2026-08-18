@@ -4,5 +4,5 @@ export interface PaymentLinkResult {
   amount: number;
   currency: string;
   status: string;
-  rawResponse: Record<string, any>;
+  rawResponse?: any;
 }

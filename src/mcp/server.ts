@@ -5,69 +5,122 @@ import { configStore } from '../config/store.js';
 import { StripeAdapter } from '../providers/stripe.js';
 import { RazorpayAdapter } from '../providers/razorpay.js';
 
+function getProvider(name: string) {
+  if (name === 'stripe') {
+    const key = configStore.get('stripeApiKey') as string;
+    if (!key) throw new Error('Stripe API Key missing. Run: pay config --stripe-key <key>');
+    return new StripeAdapter(key);
+  }
+  if (name === 'razorpay') {
+    const id = configStore.get('razorpayKeyId') as string;
+    const secret = configStore.get('razorpayKeySecret') as string;
+    if (!id || !secret) throw new Error('Razorpay keys missing. Run: pay config --razorpay-id <id> --razorpay-secret <secret>');
+    return new RazorpayAdapter(id, secret);
+  }
+  throw new Error(`Unsupported provider: ${name}`);
+}
+
 export function startMCPServer() {
   const server = new Server(
-    { name: 'pay-cli-mcp', version: '0.1.0' },
+    { name: 'unified-pay', version: '0.1.0' },
     { capabilities: { tools: {} } }
   );
 
-  // 1. Register available MCP Tools for AI agents
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
       tools: [
         {
           name: 'create_payment_link',
-          description: 'Generates a payment link using Stripe or Razorpay',
+          description: 'Create a checkout payment link via Stripe or Razorpay',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              provider: { type: 'string', enum: ['stripe', 'razorpay'], description: 'Payment gateway' },
+              amount: { type: 'number', description: 'Amount in minor units (paise/cents)' },
+              currency: { type: 'string', description: 'Currency code (INR, USD, EUR)' },
+              description: { type: 'string', description: 'Payment description/note' },
+            },
+            required: ['provider', 'amount', 'currency', 'description'],
+          },
+        },
+        {
+          name: 'list_transactions',
+          description: 'Fetch recent transactions from Stripe or Razorpay',
           inputSchema: {
             type: 'object',
             properties: {
               provider: { type: 'string', enum: ['stripe', 'razorpay'] },
-              amount: { type: 'number', description: 'Amount in minor units (e.g., 500 = $5.00 or ₹5.00)' },
-              currency: { type: 'string', description: '3-letter ISO code like USD, INR' },
-              description: { type: 'string', description: 'Description of item/service' },
+              limit: { type: 'number', description: 'Number of items to fetch (default: 5)' },
             },
-            required: ['provider', 'amount', 'currency', 'description'],
+            required: ['provider'],
+          },
+        },
+        {
+          name: 'get_payment_status',
+          description: 'Retrieve real-time status of a charge or payment ID',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              provider: { type: 'string', enum: ['stripe', 'razorpay'] },
+              paymentId: { type: 'string', description: 'Charge ID or Payment ID (e.g. ch_xxx, pay_xxx)' },
+            },
+            required: ['provider', 'paymentId'],
+          },
+        },
+        {
+          name: 'create_refund',
+          description: 'Refund a full or partial payment',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              provider: { type: 'string', enum: ['stripe', 'razorpay'] },
+              paymentId: { type: 'string', description: 'Charge ID or Payment ID to refund' },
+              amount: { type: 'number', description: 'Optional partial amount in minor units (cents/paise)' },
+            },
+            required: ['provider', 'paymentId'],
           },
         },
       ],
     };
   });
 
-  // 2. Handle Tool Execution
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    if (request.params.name === 'create_payment_link') {
-      const args = request.params.arguments as any;
+  server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
+    const { name, arguments: args } = request.params;
+    const adapter = getProvider(args.provider);
 
-      try {
-        let adapter;
-        if (args.provider === 'stripe') {
-          adapter = new StripeAdapter(configStore.get('stripeApiKey') as string);
-        } else {
-          adapter = new RazorpayAdapter(
-            configStore.get('razorpayKeyId') as string,
-            configStore.get('razorpayKeySecret') as string
-          );
-        }
-
-        const result = await adapter.createPaymentLink(args);
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({ success: true, url: result.url, id: result.id }),
-            },
-          ],
-        };
-      } catch (err: any) {
-        return {
-          content: [{ type: 'text', text: `Error: ${err.message}` }],
-          isError: true,
-        };
+    try {
+      if (name === 'create_payment_link') {
+        const result = await adapter.createPaymentLink({
+          amount: args.amount,
+          currency: args.currency,
+          description: args.description,
+        });
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       }
-    }
 
-    throw new Error('Tool not found');
+      if (name === 'list_transactions') {
+        const txns = await adapter.listTransactions(args.limit || 5);
+        return { content: [{ type: 'text', text: JSON.stringify(txns, null, 2) }] };
+      }
+
+      if (name === 'get_payment_status') {
+        const status = await adapter.getPaymentStatus(args.paymentId);
+        return { content: [{ type: 'text', text: JSON.stringify(status, null, 2) }] };
+      }
+
+      if (name === 'create_refund') {
+        const refund = await adapter.createRefund({
+          paymentId: args.paymentId,
+          amount: args.amount,
+        });
+        return { content: [{ type: 'text', text: JSON.stringify(refund, null, 2) }] };
+      }
+
+      throw new Error(`Unknown tool: ${name}`);
+    } catch (err: any) {
+      const msg = err?.description || err?.error?.description || err?.message || JSON.stringify(err);
+      return { isError: true, content: [{ type: 'text', text: `Error: ${msg}` }] };
+    }
   });
 
   const transport = new StdioServerTransport();

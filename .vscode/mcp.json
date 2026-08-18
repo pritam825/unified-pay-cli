@@ -1,8 +1,8 @@
 {
   "mcpServers": {
-    "pay-cli": {
-      "command": "node",
-      "args": ["${workspaceFolder}/dist/bin/pay.js", "mcp"]
+    "unified-pay": {
+      "command": "npx",
+      "args": ["-y", "unified-pay-cli", "mcp"]
     }
   }
 }
