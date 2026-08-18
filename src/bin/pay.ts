@@ -8,6 +8,7 @@ import { configStore } from '../config/store.js';
 import { StripeAdapter } from '../providers/stripe.js';
 import { RazorpayAdapter } from '../providers/razorpay.js';
 import { startMCPServer } from '../mcp/server.js';
+import { WebhookVerifier } from '../crypto/WebhookVerifier.js';
 
 const program = new Command();
 
@@ -33,23 +34,27 @@ function getAdapter(provider: string) {
 
 // 1. Config Command
 program
-    .command('config')
-    .description('Set credentials for payment providers')
-    .option('--stripe-key <key>', 'Stripe API Secret Key')
-    .option('--razorpay-id <id>', 'Razorpay Key ID')
-    .option('--razorpay-secret <secret>', 'Razorpay Key Secret')
-    .action((opts: any) => {
-        const keysSet: string[] = [];
-        if (opts.stripeKey) { configStore.set('stripeApiKey', opts.stripeKey); keysSet.push('Stripe Key'); }
-        if (opts.razorpayId) { configStore.set('razorpayKeyId', opts.razorpayId); keysSet.push('Razorpay Key ID'); }
-        if (opts.razorpaySecret) { configStore.set('razorpayKeySecret', opts.razorpaySecret); keysSet.push('Razorpay Key Secret'); }
+  .command('config')
+  .description('Set credentials for payment providers')
+  .option('--stripe-key <key>', 'Stripe API Secret Key')
+  .option('--razorpay-id <id>', 'Razorpay Key ID')
+  .option('--razorpay-secret <secret>', 'Razorpay Key Secret')
+  .option('--lemonsqueezy-key <key>', 'LemonSqueezy API Key')
+  .option('--lemonsqueezy-store <storeId>', 'LemonSqueezy Store ID')
+  .action((opts: any) => {
+    const keysSet: string[] = [];
+    if (opts.stripeKey) { configStore.set('stripeApiKey', opts.stripeKey); keysSet.push('Stripe Key'); }
+    if (opts.razorpayId) { configStore.set('razorpayKeyId', opts.razorpayId); keysSet.push('Razorpay Key ID'); }
+    if (opts.razorpaySecret) { configStore.set('razorpayKeySecret', opts.razorpaySecret); keysSet.push('Razorpay Key Secret'); }
+    if (opts.lemonsqueezyKey) { configStore.set('lemonApiKey', opts.lemonsqueezyKey); keysSet.push('LemonSqueezy Key'); }
+    if (opts.lemonsqueezyStore) { configStore.set('lemonStoreId', opts.lemonsqueezyStore); keysSet.push('LemonSqueezy Store ID'); }
 
-        if (keysSet.length === 0) {
-            console.log(chalk.yellow('No keys provided. Pass flags like --stripe-key <key>'));
-            return;
-        }
-        console.log(chalk.green(`✔ Saved configuration for: ${keysSet.join(', ')}`));
-    });
+    if (keysSet.length === 0) {
+      console.log(chalk.yellow('No keys provided. Pass flags like --stripe-key <key>'));
+      return;
+    }
+    console.log(chalk.green(`✔ Saved configuration for: ${keysSet.join(', ')}`));
+  });
 
 // 2. Link Command (Interactive + Flags)
 program
@@ -225,34 +230,86 @@ refund
         }
     });
 
-// 5. Local Webhook Listener
+// -------------------------------------------------------------
+// 5. Local Webhook Listener & Forwarding Proxy
+// -------------------------------------------------------------
 program
-    .command('listen')
-    .description('Start a local webhook inspection server')
-    .option('-p, --port <port>', 'Local port to bind', parseInt, 4242)
-    .action((opts: any) => {
-        const server = http.createServer((req, res) => {
-            let body = '';
-            req.on('data', (chunk) => { body += chunk; });
-            req.on('end', () => {
-                const time = new Date().toLocaleTimeString();
-                console.log(chalk.bold.magenta(`\n[${time}] Received Webhook on ${req.url}`));
-                try {
-                    const parsed = JSON.parse(body);
-                    console.log(chalk.green(JSON.stringify(parsed, null, 2)));
-                } catch {
-                    console.log(chalk.gray(body || '(Empty payload)'));
-                }
-                res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ received: true }));
-            });
-        });
+  .command('listen')
+  .description('Start a local webhook inspection server with signature verification')
+  .option('-p, --port <port>', 'Local port to bind', (val) => parseInt(val, 10), 4242)
+  .option('-f, --forward <url>', 'Forward received webhooks to a local backend API')
+  .option('-s, --secret <secret>', 'Webhook signing secret to verify HMAC signatures')
+  .action((opts: any) => {
+    const port = Number(opts.port) || 4242;
 
-        server.listen(opts.port, () => {
-            console.log(chalk.cyan.bold(`\n⚡ Webhook listener running at http://localhost:${opts.port}/`));
-            console.log(chalk.gray('Waiting for events from Stripe or Razorpay... (Ctrl+C to quit)\n'));
-        });
+    const server = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', (chunk) => { body += chunk; });
+      req.on('end', async () => {
+        const time = new Date().toLocaleTimeString();
+        console.log(chalk.bold.magenta(`\n[${time}] Received Webhook on ${req.url}`));
+
+        // 1. Signature Verification Check
+        if (opts.secret) {
+          const rzpSig = req.headers['x-razorpay-signature'] as string;
+          const stripeSig = req.headers['stripe-signature'] as string;
+
+          let isValid = false;
+          if (rzpSig) {
+            isValid = WebhookVerifier.verifyRazorpaySignature(body, rzpSig, opts.secret);
+          } else if (stripeSig) {
+            isValid = WebhookVerifier.verifyStripeSignature(body, stripeSig, opts.secret);
+          }
+
+          if (!isValid) {
+            console.log(chalk.red.bold('✖ Signature verification FAILED. Dropping untrusted payload.'));
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid signature' }));
+            return;
+          }
+
+          console.log(chalk.green('✔ Webhook signature verified successfully (Authentic).'));
+        }
+
+        // 2. Parse and Display
+        try {
+          const parsed = JSON.parse(body);
+          console.log(chalk.green(JSON.stringify(parsed, null, 2)));
+        } catch {
+          console.log(chalk.gray(body || '(Empty payload)'));
+        }
+
+        // 3. Forward if configured
+        if (opts.forward) {
+          try {
+            console.log(chalk.blue(`⏳ Forwarding verified event to ${opts.forward}...`));
+            const forwardRes = await fetch(opts.forward, {
+              method: 'POST',
+              headers: {
+                'Content-Type': req.headers['content-type'] || 'application/json',
+                'x-razorpay-signature': (req.headers['x-razorpay-signature'] as string) || '',
+                'stripe-signature': (req.headers['stripe-signature'] as string) || '',
+              },
+              body: body,
+            });
+            console.log(chalk.green(`✔ Forwarded successfully (Status: ${forwardRes.status})`));
+          } catch (err: any) {
+            console.log(chalk.red(`✖ Failed to forward payload: ${err.message}`));
+          }
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ received: true }));
+      });
     });
+
+    server.listen(port, () => {
+      console.log(chalk.cyan.bold(`\n⚡ Webhook listener running at http://localhost:${port}/`));
+      if (opts.secret) console.log(chalk.green(`🔒 Signature verification enabled`));
+      if (opts.forward) console.log(chalk.yellow(`🔁 Forwarding target: ${opts.forward}`));
+      console.log(chalk.gray('Waiting for events... (Ctrl+C to quit)\n'));
+    });
+  });
 
 // 6. MCP Server
 program

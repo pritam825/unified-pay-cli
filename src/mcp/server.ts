@@ -4,6 +4,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { configStore } from '../config/store.js';
 import { StripeAdapter } from '../providers/stripe.js';
 import { RazorpayAdapter } from '../providers/razorpay.js';
+import { WebhookVerifier } from '../crypto/WebhookVerifier.js';
 
 function getProvider(name: string) {
   if (name === 'stripe') {
@@ -103,6 +104,20 @@ export function startMCPServer() {
             },
             required: ['provider'],
           },
+        },
+        {
+          name: 'verify_webhook_signature',
+          description: 'Verify HMAC-SHA256 authenticity of an incoming Stripe or Razorpay webhook payload',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              provider: { type: 'string', enum: ['stripe', 'razorpay'] },
+              rawPayload: { type: 'string', description: 'Exact raw body string received in the HTTP request' },
+              signature: { type: 'string', description: 'Value of x-razorpay-signature or stripe-signature header' },
+              secret: { type: 'string', description: 'Webhook signing secret' }
+            },
+            required: ['provider', 'rawPayload', 'signature', 'secret']
+          }
         }
       ],
     };
@@ -148,6 +163,27 @@ export function startMCPServer() {
       if (name === 'list_refunds') {
         const refunds = await adapter.listRefunds(args.limit || 5);
         return { content: [{ type: 'text', text: JSON.stringify(refunds, null, 2) }] };
+      }
+
+      // 2. Execution Handler
+      if (name === 'verify_webhook_signature') {
+        let isValid = false;
+        if (args.provider === 'razorpay') {
+          isValid = WebhookVerifier.verifyRazorpaySignature(args.rawPayload, args.signature, args.secret);
+        } else if (args.provider === 'stripe') {
+          isValid = WebhookVerifier.verifyStripeSignature(args.rawPayload, args.signature, args.secret);
+        }
+
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              provider: args.provider,
+              verified: isValid,
+              message: isValid ? 'Signature is valid and authentic.' : 'Invalid signature. Payload may have been tampered with.'
+            }, null, 2)
+          }]
+        };
       }
 
       throw new Error(`Unknown tool: ${name}`);
