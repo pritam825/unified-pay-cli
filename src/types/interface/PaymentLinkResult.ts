@@ -4,5 +4,6 @@ export interface PaymentLinkResult {
   amount: number;
   currency: string;
   status: string;
+  expiresAt?: string;
   rawResponse?: any;
 }

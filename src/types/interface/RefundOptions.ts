@@ -1,5 +1,5 @@
 export interface RefundOptions {
   paymentId: string;
-  amount?: number; // Minor units (optional for full refund)
+  amount?: number;
   notes?: Record<string, string>;
 }

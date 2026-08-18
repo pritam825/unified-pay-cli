@@ -27,13 +27,28 @@ export class StripeAdapter implements PaymentProvider {
             },
         });
 
-        const paymentLink = await this.client.paymentLinks.create({
+        const payload: any = {
             line_items: [{ price: price.id, quantity: 1 }],
-        });
+            phone_number_collection: {
+                enabled: Boolean(options.customerPhone),
+            },
+        };
+
+        if (options.expiresInMinutes && options.expiresInMinutes > 0) {
+            payload.expires_at = Math.floor(Date.now() / 1000) + (options.expiresInMinutes * 60);
+        }
+
+        const paymentLink = await this.client.paymentLinks.create(payload);
+
+        // Stripe allows prefilling email via URL query parameters
+        let finalUrl = paymentLink.url;
+        if (options.customerEmail) {
+            finalUrl += `?prefilled_email=${encodeURIComponent(options.customerEmail)}`;
+        }
 
         return {
             id: paymentLink.id,
-            url: paymentLink.url,
+            url: finalUrl,
             amount: options.amount,
             currency: options.currency.toUpperCase(),
             status: paymentLink.active ? 'active' : 'inactive',
@@ -91,7 +106,7 @@ export class StripeAdapter implements PaymentProvider {
             createdAt: new Date(r.created * 1000).toISOString(),
         };
     }
-    
+
     async listRefunds(limit = 10): Promise<RefundDetails[]> {
         const refunds = await this.client.refunds.list({ limit });
         return refunds.data.map((r: any) => ({

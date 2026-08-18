@@ -1,61 +1,52 @@
 Output assets/demo.gif
 
-Set FontSize 16
-Set Width 960
-Set Height 580
+Set FontSize 14
+Set Width 1000
+Set Height 650
 Set Padding 20
 Set Theme "TokyoNight"
 
-# 1. Show Help & Providers
+# 1. Overview & Available Commands
 Type "pay --help"
-Enter
-Sleep 2s
-
-# 2. Configure Gateway Credentials
-Type "pay config --razorpay-id rzp_test_TROQOJsbj9DlSN --razorpay-secret XLTEqtkKAkoO0rMSh22eYUSc"
 Enter
 Sleep 1.5s
 
-# 3. Create a Payment Link (Interactive Mode)
-Type "pay link"
+# 2. Configure Credentials (Live Test Keys)
+Type "pay config --razorpay-id rzp_test_TROQOJsbj9DlSN --razorpay-secret XLTEqtkKAkoO0rMSh22eYUSc"
 Enter
-Sleep 1s
+Sleep 1.2s
 
-# Select Razorpay
-Down
-Sleep 400ms
-Enter
-
-# Amount (350000 = ₹3,500)
-Type "350000"
-Enter
-Sleep 400ms
-
-# Currency default (INR)
-Enter
-Sleep 400ms
-
-# Description
-Type "Full-Stack System Architecture Consultation"
+# 3. [Feature: Fee Comparison & Smart Routing] Compare rates across gateways
+Type "pay compare 350000 --currency INR"
 Enter
 Sleep 2.5s
 
-# 4. List Recent Transactions
-Type "pay txn list --provider razorpay --limit 2"
+# 4. [Features: Prefill, 15m Expiry & Terminal QR] Generate smart expiring link
+Type "pay link --provider razorpay --amount 350000 --currency INR --desc 'Architecture Review' --name 'Rahul Sharma' --phone '+919876543210' --expire 15"
+Enter
+Sleep 3.5s
+
+# 5. [Feature: Invoicing] Generate itemized breakdown invoice
+Type "pay invoice --provider razorpay --email client@acme.corp --items 'SystemDesign:1:300000,Consultation:1:50000'"
 Enter
 Sleep 2.5s
 
-# 5. Process a Partial Refund
-Type "pay refund create pay_Oq7Jk8LmNx9 --provider razorpay --amount 50000"
+# 6. [Feature: Multi-Profile Switcher] Inspect environment profiles
+Type "pay profile list"
+Enter
+Sleep 1.5s
+
+# 7. [Feature: Analytics] Inspect real-time transaction performance
+Type "pay stats --provider razorpay"
 Enter
 Sleep 2.5s
 
-# 6. Check Refund Status
-Type "pay refund status rfnd_TRNTRFvhQ6NDKx --provider razorpay"
+# 8. [Feature: Synthetic Webhook Trigger] Fire mock HMAC-signed event
+Type "pay trigger payment.captured --provider razorpay --target http://localhost:4242/webhooks/razorpay --secret whsec_test"
 Enter
 Sleep 2.5s
 
-# 7. Start Webhook Listener with HMAC-SHA256 Verification & Forwarding
-Type "pay listen --port 4242 --secret my_webhook_secret --forward http://localhost:3000/api/webhooks"
+# 9. [Feature: Webhook Listener] Start local verification proxy station
+Type "pay listen --port 4242 --secret whsec_test --forward http://localhost:3000/api/webhooks"
 Enter
 Sleep 3s

@@ -2,8 +2,8 @@ export interface RefundDetails {
   id: string;
   paymentId: string;
   amount: number;
-  currency: string;
+  currency?: string;
   status: string;
   createdAt: string;
-  speedProcessed?: string;
+  speedProcessed?: string; // 👈 Added (for Razorpay instant/normal refunds)
 }

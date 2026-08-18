@@ -2,6 +2,7 @@ export interface RefundResult {
   id: string;
   paymentId: string;
   amount: number;
-  currency: string;
+  currency?: string; // 👈 Added
   status: string;
+  rawResponse?: any;
 }

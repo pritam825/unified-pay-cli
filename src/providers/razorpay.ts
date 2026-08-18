@@ -20,25 +20,41 @@ export class RazorpayAdapter implements PaymentProvider {
     }
 
     async createPaymentLink(options: CreatePaymentLinkOptions): Promise<PaymentLinkResult> {
-        const payload: Record<string, any> = {
+        const payload: any = {
             amount: options.amount,
             currency: options.currency.toUpperCase(),
             description: options.description,
         };
 
-        if (options.customerEmail) {
-            payload.customer = { email: options.customerEmail };
+        // Prefill customer details if provided
+        if (options.customerEmail || options.customerName || options.customerPhone) {
+            payload.customer = {
+                name: options.customerName || undefined,
+                email: options.customerEmail || undefined,
+                contact: options.customerPhone || undefined,
+            };
+
+            // Auto-trigger SMS/Email notification if contact/email exists
+            payload.notify = {
+                sms: Boolean(options.customerPhone),
+                email: Boolean(options.customerEmail),
+            };
         }
 
-        const link = await this.client.paymentLink.create(payload);
+        if (options.expiresInMinutes && options.expiresInMinutes > 0) {
+            payload.expire_by = Math.floor(Date.now() / 1000) + (options.expiresInMinutes * 60) + 60;
+        }
+
+        const res = await this.client.paymentLink.create(payload);
 
         return {
-            id: link.id,
-            url: link.short_url,
-            amount: link.amount,
-            currency: link.currency,
-            status: link.status,
-            rawResponse: link,
+            id: res.id,
+            url: res.short_url,
+            amount: res.amount,
+            currency: res.currency,
+            status: res.status,
+            expiresAt: res.expire_by ? new Date(res.expire_by * 1000).toISOString() : undefined,
+            rawResponse: res,
         };
     }
 

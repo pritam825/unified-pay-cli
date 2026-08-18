@@ -4,5 +4,6 @@ export interface Transaction {
   currency: string;
   status: string;
   createdAt: string;
+  customerEmail?: string;
   description?: string;
 }
