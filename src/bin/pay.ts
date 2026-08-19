@@ -6,6 +6,8 @@ import http from 'http';
 import { StripeAdapter } from '../providers/stripe.js';
 import { RazorpayAdapter } from '../providers/razorpay.js';
 import { LemonSqueezyAdapter } from '../providers/lemonsqueezy.js';
+import { CashfreeAdapter } from '../providers/cashfree.js';
+import { UPIAdapter } from '../providers/upi.js';
 import { WebhookVerifier } from '../crypto/WebhookVerifier.js';
 import { renderTerminalQR } from '../utils/qr.js';
 import { GatewayRouter } from '../utils/router.js';
@@ -19,6 +21,20 @@ const profileManager = new ProfileManager();
 
 function getActiveProvider(providerName: PaymentProviderType): PaymentProvider {
     const activeProfile = profileManager.getProfile();
+
+    if (providerName === 'upi') {
+        const vpa = activeProfile.upiVpa || process.env.UPI_VPA;
+        const name = activeProfile.upiName || process.env.UPI_NAME;
+        if (!vpa) throw new Error(`UPI VPA missing. Set via: pay config --upi-vpa <your_vpa@bank> --upi-name "<Name>"`);
+        return new UPIAdapter(vpa, name);
+    }
+
+    if (providerName === 'cashfree') {
+        const appId = activeProfile.cashfreeAppId || process.env.CASHFREE_APP_ID;
+        const secretKey = activeProfile.cashfreeSecretKey || process.env.CASHFREE_SECRET_KEY;
+        if (!appId || !secretKey) throw new Error(`Cashfree keys missing. Set via: pay config --cashfree-app-id <appId> --cashfree-secret <sec>`);
+        return new CashfreeAdapter(appId, secretKey, false);
+    }
 
     if (providerName === 'stripe') {
         const key = activeProfile.stripeApiKey || process.env.STRIPE_API_KEY;
@@ -45,15 +61,19 @@ function getActiveProvider(providerName: PaymentProviderType): PaymentProvider {
 
 program
     .name('pay')
-    .description('Universal Payment Gateway CLI & MCP Engine (Stripe, Razorpay, LemonSqueezy)')
-    .version('0.3.0');
+    .description('Universal Payment Gateway CLI & MCP Engine (UPI, Cashfree, Razorpay, Stripe, LemonSqueezy)')
+    .version('0.4.0');
 
 // -------------------------------------------------------------
-// 1. Config & Profile Switching (Feature 5)
+// 1. Config & Profile Switching
 // -------------------------------------------------------------
 program
     .command('config')
     .description('Set credentials for active profile')
+    .option('--upi-vpa <vpa>', 'UPI ID / VPA (e.g. yourname@okaxis)')
+    .option('--upi-name <name>', 'Payee Display Name for UPI')
+    .option('--cashfree-app-id <appId>', 'Cashfree App ID')
+    .option('--cashfree-secret <secret>', 'Cashfree Secret Key')
     .option('--stripe-key <key>', 'Stripe Secret Key')
     .option('--razorpay-id <id>', 'Razorpay Key ID')
     .option('--razorpay-secret <secret>', 'Razorpay Key Secret')
@@ -62,6 +82,10 @@ program
     .action((opts: any) => {
         const active = profileManager.getActiveProfileName();
         profileManager.saveProfile(active, {
+            upiVpa: opts.upiVpa,
+            upiName: opts.upiName,
+            cashfreeAppId: opts.cashfreeAppId,
+            cashfreeSecretKey: opts.cashfreeSecret,
             stripeApiKey: opts.stripeKey,
             razorpayKeyId: opts.razorpayId,
             razorpayKeySecret: opts.razorpaySecret,
@@ -94,24 +118,32 @@ program
     });
 
 // -------------------------------------------------------------
-// 2. Payment Link with QR Code, Expiry & Smart Routing (Features 1, 2, 3)
+// 2. Payment Link with QR Code, Expiry & Smart Routing
 // -------------------------------------------------------------
 program
     .command('link')
-    .description('Create a checkout link with customer prefill, QR code, and expiry timeout')
-    .option('-p, --provider <provider>', 'stripe | razorpay | lemonsqueezy')
-    .option('-a, --amount <amount>', 'Amount in minor units (e.g. 50000 = ₹500)', (v) => parseInt(v, 10))
-    .option('-c, --currency <currency>', 'Currency code', 'INR')
-    .option('-d, --desc <description>', 'Payment description')
-    .option('-e, --expire <minutes>', 'Expiry timeout in minutes', (v) => parseInt(v, 10))
-    .option('--name <customerName>', 'Prefill customer name')
-    .option('--email <customerEmail>', 'Prefill customer email')
-    .option('--phone <customerPhone>', 'Prefill customer mobile number (e.g. +919876543210)')
-    .option('--qr', 'Render ASCII QR code in terminal', true)
-    .option('--smart', 'Auto-select optimal gateway')
+    .description('Create a payment link or UPI QR code')
+    .option('-p, --provider <provider>', 'Payment provider (upi, cashfree, razorpay, stripe, lemonsqueezy)', 'upi')
+    .option('-a, --amount <amount>', 'Amount in minor units (paise/cents, e.g. 100000 = ₹1,000)', parseInt)
+    .option('-c, --currency <currency>', 'Currency code (e.g. INR, USD)', 'INR')
+    .option('-d, --description <description>', 'Payment description / memo')
+    .option('--desc <desc>', 'Alias for description')
+    .option('--name <name>', 'Customer name')
+    .option('--phone <phone>', 'Customer phone number')
+    .option('--email <email>', 'Customer email address')
+    .option('--expire <minutes>', 'Expiry in minutes', parseInt)
+    .option('--qr', 'Force render terminal QR code')
+    .option('--smart', 'Auto-route to optimal provider')
     .action(async (opts: any) => {
         try {
-            let { provider, amount, currency, desc, expire, name, email, phone } = opts;
+            let provider = opts.provider;
+            let amount = opts.amount;
+            let currency = opts.currency || 'INR';
+            let desc = opts.description || opts.desc;
+            let name = opts.name;
+            let email = opts.email;
+            let phone = opts.phone;
+            let expire = opts.expire;
 
             if (opts.smart && currency && amount) {
                 provider = GatewayRouter.recommendProvider(currency, amount);
@@ -123,14 +155,14 @@ program
                         type: 'list',
                         name: 'provider',
                         message: 'Select payment provider:',
-                        choices: ['razorpay', 'stripe', 'lemonsqueezy'],
-                        default: 'razorpay',
+                        choices: ['upi', 'cashfree', 'razorpay', 'stripe', 'lemonsqueezy'],
+                        default: 'upi',
                         when: !provider,
                     },
                     {
                         type: 'number',
                         name: 'amount',
-                        message: 'Enter amount in smallest unit (e.g. 50000 = ₹500):',
+                        message: 'Enter amount in smallest unit (e.g. 100000 = ₹1,000 / 5000 = $50):',
                         when: !amount,
                     },
                     {
@@ -144,6 +176,7 @@ program
                         type: 'input',
                         name: 'desc',
                         message: 'Payment description:',
+                        default: 'Payment',
                         when: !desc,
                     },
                     {
@@ -176,7 +209,7 @@ program
             }
 
             const client = getActiveProvider(provider);
-            console.log(chalk.blue(`⏳ Generating prefilled checkout link on ${provider}...`));
+            console.log(chalk.blue(`⏳ Generating checkout link / QR on ${chalk.bold(provider)}...`));
 
             const result = await client.createPaymentLink({
                 amount,
@@ -188,17 +221,23 @@ program
                 expiresInMinutes: expire > 0 ? expire : undefined,
             });
 
-            console.log(chalk.green.bold('\n✔ Payment Link Created Successfully:'));
-            console.log(`  ${chalk.cyan('URL:')}         ${chalk.bold.underline(result.url)}`);
-            console.log(`  ${chalk.cyan('ID:')}          ${result.id}`);
-            console.log(`  ${chalk.cyan('Amount:')}      ${result.amount} ${result.currency}`);
-            if (name) console.log(`  ${chalk.cyan('Prefilled:')}   ${name} (${phone || email || 'N/A'})`);
+            console.log(chalk.green.bold('\n✔ Payment Link / UPI Intent Created:'));
+            console.log(`  ${chalk.cyan('URL / Intent:')}  ${chalk.bold.underline(result.url)}`);
+            console.log(`  ${chalk.cyan('ID:')}            ${result.id}`);
+            console.log(`  ${chalk.cyan('Amount:')}        ${(result.amount / 100).toFixed(2)} ${result.currency}`);
+            if (name) console.log(`  ${chalk.cyan('Customer:')}      ${name} (${phone || email || 'N/A'})`);
             if (result.expiresAt) {
-                console.log(`  ${chalk.yellow('Expires:')}     ${new Date(result.expiresAt).toLocaleString()}`);
+                console.log(`  ${chalk.yellow('Expires:')}       ${new Date(result.expiresAt).toLocaleString()}`);
             }
 
-            if (opts.qr) {
-                renderTerminalQR(result.url, `Scan with Phone to Pay (${name || 'Customer'})`);
+            // Always render QR code for direct UPI or when --qr flag is passed
+            if (provider === 'upi' || opts.qr) {
+                console.log();
+                if (result.qrCodeAscii) {
+                    console.log(result.qrCodeAscii);
+                } else {
+                    renderTerminalQR(result.url, `Scan with GPay / PhonePe / Paytm to Pay`);
+                }
             }
         } catch (err: any) {
             console.log(chalk.red(`✖ Error: ${err.message}`));
@@ -206,11 +245,11 @@ program
     });
 
 // -------------------------------------------------------------
-// 3. Fee Comparison & Smart Router Inspector (Feature 3)
+// 3. Fee Comparison & Smart Router Inspector
 // -------------------------------------------------------------
 program
     .command('compare')
-    .description('Compare transaction fees and payout across Stripe, Razorpay, and LemonSqueezy')
+    .description('Compare transaction fees and payout across Gateways')
     .argument('<amount>', 'Amount in minor units', (v) => parseInt(v, 10))
     .option('-c, --currency <currency>', 'Currency code (INR, USD, EUR)', 'INR')
     .action((amount: number, opts: any) => {
@@ -231,13 +270,13 @@ program
     });
 
 // -------------------------------------------------------------
-// 4. Synthetic Mock Webhook Trigger (Feature 4)
+// 4. Synthetic Mock Webhook Trigger
 // -------------------------------------------------------------
 program
     .command('trigger')
     .description('Send a synthetic, HMAC-signed webhook event to your local backend')
     .argument('<event>', 'Event name (e.g. payment.captured, payment.failed, refund.processed)')
-    .option('-p, --provider <provider>', 'razorpay | stripe', 'razorpay')
+    .option('-p, --provider <provider>', 'razorpay | stripe | cashfree', 'razorpay')
     .option('-t, --target <url>', 'Backend target URL', 'http://localhost:3000/api/webhooks')
     .option('-s, --secret <secret>', 'HMAC signing secret', 'my_webhook_secret')
     .option('-a, --amount <amount>', 'Amount in minor units', (v) => parseInt(v, 10), 50000)
@@ -257,12 +296,12 @@ program
     });
 
 // -------------------------------------------------------------
-// 5. Invoicing & Line Items (Feature 6)
+// 5. Invoicing & Line Items
 // -------------------------------------------------------------
 program
     .command('invoice')
     .description('Generate an itemized invoice link with tax calculations')
-    .option('-p, --provider <provider>', 'razorpay | stripe', 'razorpay')
+    .option('-p, --provider <provider>', 'upi | cashfree | razorpay | stripe', 'upi')
     .option('-e, --email <email>', 'Customer email address')
     .option('-c, --currency <currency>', 'Currency code', 'INR')
     .option('--items <items>', 'Item list formatted as "Name:Qty:PriceInMinorUnits,..."')
@@ -283,7 +322,6 @@ program
                 items = items || answers.items;
             }
 
-            // Parse items
             const parsedItems = items.split(',').map((it: string) => {
                 const [name, qty, price] = it.split(':');
                 return { name: name.trim(), quantity: parseInt(qty, 10) || 1, unitAmount: parseInt(price, 10) || 0 };
@@ -292,7 +330,7 @@ program
             const totalAmount = parsedItems.reduce((acc: number, it: any) => acc + (it.quantity * it.unitAmount), 0);
             const desc = parsedItems.map((i: any) => `${i.name} (x${i.quantity})`).join(', ');
 
-            const client = getActiveProvider(provider || 'razorpay');
+            const client = getActiveProvider(provider || 'upi');
             console.log(chalk.blue(`⏳ Generating invoice link for ${email}...`));
 
             const result = await client.createPaymentLink({
@@ -303,22 +341,26 @@ program
             });
 
             console.log(chalk.green.bold('\n✔ Itemized Invoice Generated:'));
-            console.log(`  ${chalk.cyan('Total:')}    ${totalAmount} ${currency || 'INR'}`);
+            console.log(`  ${chalk.cyan('Total:')}    ${(totalAmount / 100).toFixed(2)} ${currency || 'INR'}`);
             console.log(`  ${chalk.cyan('Items:')}    ${desc}`);
             console.log(`  ${chalk.cyan('Pay URL:')}  ${chalk.bold.underline(result.url)}`);
-            renderTerminalQR(result.url, 'Scan to Pay Invoice');
+            
+            if (provider === 'upi') {
+                if (result.qrCodeAscii) console.log(result.qrCodeAscii);
+                else renderTerminalQR(result.url, 'Scan to Pay Invoice');
+            }
         } catch (err: any) {
             console.log(chalk.red(`✖ Error: ${err.message}`));
         }
     });
 
 // -------------------------------------------------------------
-// 6. Analytics & Overview Dashboard (Feature 7)
+// 6. Analytics & Overview Dashboard
 // -------------------------------------------------------------
 program
     .command('stats')
     .description('Display real-time transaction analytics across active gateways')
-    .option('-p, --provider <provider>', 'razorpay | stripe | lemonsqueezy', 'razorpay')
+    .option('-p, --provider <provider>', 'razorpay | stripe | lemonsqueezy | cashfree', 'razorpay')
     .action(async (opts: any) => {
         try {
             const client = getActiveProvider(opts.provider);
@@ -346,7 +388,7 @@ const txn = program.command('txn').description('Inspect transactions');
 txn
     .command('list')
     .description('List recent transactions')
-    .option('-p, --provider <provider>', 'stripe | razorpay | lemonsqueezy', 'razorpay')
+    .option('-p, --provider <provider>', 'stripe | razorpay | lemonsqueezy | cashfree', 'razorpay')
     .option('-l, --limit <limit>', 'Number of transactions', (v) => parseInt(v, 10), 10)
     .action(async (opts: any) => {
         try {
@@ -362,13 +404,13 @@ const refund = program.command('refund').description('Manage refunds');
 refund
     .command('create <paymentId>')
     .description('Issue a refund')
-    .option('-p, --provider <provider>', 'stripe | razorpay', 'razorpay')
+    .option('-p, --provider <provider>', 'stripe | razorpay | cashfree', 'razorpay')
     .option('-a, --amount <amount>', 'Amount in minor units', (v) => parseInt(v, 10))
     .action(async (paymentId: string, opts: any) => {
         try {
             const client = getActiveProvider(opts.provider);
             const res = await client.createRefund({ paymentId, amount: opts.amount });
-            console.log(chalk.green(`✔ Refund issued: ${res.id} (${res.status})`));
+            console.log(chalk.green(`✔ Refund issued: ${res.id || paymentId}`));
         } catch (err: any) {
             console.log(chalk.red(`✖ Error: ${err.message}`));
         }

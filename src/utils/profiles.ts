@@ -2,12 +2,17 @@ import Conf from 'conf';
 import chalk from 'chalk';
 
 export interface ProfileCredentials {
-  name: string;
   stripeApiKey?: string;
   razorpayKeyId?: string;
   razorpayKeySecret?: string;
   lemonApiKey?: string;
   lemonStoreId?: string;
+  // New providers:
+  cashfreeAppId?: string;
+  cashfreeSecretKey?: string;
+  upiVpa?: string;       // e.g. "username@okaxis" or "9876543210@ybl"
+  upiName?: string;      // e.g. "Pritam Enterprises" or "Store"
+  [key: string]: any;
 }
 
 export class ProfileManager {

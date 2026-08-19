@@ -1,1 +1,6 @@
-export type PaymentProviderType = 'stripe' | 'razorpay' | 'lemonsqueezy';
+export type PaymentProviderType =
+  | 'stripe'
+  | 'razorpay'
+  | 'lemonsqueezy'
+  | 'cashfree'
+  | 'upi';

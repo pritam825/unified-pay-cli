@@ -9,7 +9,10 @@
       "description": "Payment gateway orchestration and checkout generation for AI agents (Stripe, Razorpay, LemonSqueezy)",
       "transport": "stdio",
       "command": "npx",
-      "args": ["-y", "unified-pay-cli@0.1.2"]
+      "args": [
+        "-y",
+        "unified-pay-cli@0.1.2"
+      ]
     }
   },
   "type": "module",
@@ -46,6 +49,7 @@
     "conf": "^15.1.0",
     "inquirer": "^14.0.2",
     "ora": "^9.4.1",
+    "qrcode": "^1.5.4",
     "qrcode-terminal": "^0.12.0",
     "razorpay": "^2.9.8",
     "stripe": "^22.5.0",
@@ -54,6 +58,7 @@
   "devDependencies": {
     "@types/inquirer": "^9.0.10",
     "@types/node": "^26.2.0",
+    "@types/qrcode": "^1.5.6",
     "@types/qrcode-terminal": "^0.12.2",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11"

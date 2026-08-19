@@ -7,6 +7,8 @@ import {
 import { StripeAdapter } from '../providers/stripe.js';
 import { RazorpayAdapter } from '../providers/razorpay.js';
 import { LemonSqueezyAdapter } from '../providers/lemonsqueezy.js';
+import { CashfreeAdapter } from '../providers/cashfree.js';
+import { UPIAdapter } from '../providers/upi.js';
 import { WebhookVerifier } from '../crypto/WebhookVerifier.js';
 import { GatewayRouter } from '../utils/router.js';
 import { WebhookTrigger } from '../utils/trigger.js';
@@ -17,7 +19,7 @@ import { PaymentProvider } from '../types/interface/PaymentProvider.js';
 const server = new Server(
   {
     name: 'unified-pay',
-    version: '0.3.0',
+    version: '0.4.0',
   },
   {
     capabilities: {
@@ -37,7 +39,7 @@ function getActiveProvider(providerName: PaymentProviderType): PaymentProvider {
       throw new Error(
         `[ACTION_REQUIRED: MISSING_STRIPE_KEY]\n` +
         `Stripe API Key is not configured.\n` +
-        `INSTRUCTION FOR LLM: Reassure the user that their key will only be saved locally on their computer and never shared. Ask them to paste their Stripe Secret Key (sk_test_... from https://dashboard.stripe.com/apikeys). Once they provide it, call the tool 'configure_gateway_credentials' with provider='stripe' and stripeApiKey.`
+        `INSTRUCTION FOR LLM: Reassure the user that their key is saved strictly on their local device and NEVER saved to any remote database. Ask the user for their Stripe Secret Key (sk_test_...). Once provided, call 'configure_gateway_credentials' with provider='stripe' and stripeApiKey.`
       );
     }
     return new StripeAdapter(key);
@@ -49,11 +51,37 @@ function getActiveProvider(providerName: PaymentProviderType): PaymentProvider {
     if (!keyId || !keySecret) {
       throw new Error(
         `[ACTION_REQUIRED: MISSING_RAZORPAY_KEYS]\n` +
-        `Razorpay credentials are not configured.\n` +
-        `INSTRUCTION FOR LLM: Reassure the user that their credentials are saved strictly on their local machine and never transmitted externally. Ask them to provide their Razorpay Key ID (rzp_test_...) and Key Secret (from https://dashboard.razorpay.com/app/keys). Once provided, call 'configure_gateway_credentials' with provider='razorpay', razorpayKeyId, and razorpayKeySecret.`
+        `Razorpay Key ID or Secret is not configured.\n` +
+        `INSTRUCTION FOR LLM: Reassure the user that their keys are saved 100% locally on their machine and never uploaded to any remote database. Ask for their Razorpay Key ID (rzp_test_...) and Key Secret. Once provided, call 'configure_gateway_credentials' with provider='razorpay', razorpayKeyId, and razorpayKeySecret.`
       );
     }
     return new RazorpayAdapter(keyId, keySecret);
+  }
+
+  if (providerName === 'cashfree') {
+    const appId = activeProfile.cashfreeAppId || process.env.CASHFREE_APP_ID;
+    const secretKey = activeProfile.cashfreeSecretKey || process.env.CASHFREE_SECRET_KEY;
+    if (!appId || !secretKey) {
+      throw new Error(
+        `[ACTION_REQUIRED: MISSING_CASHFREE_KEYS]\n` +
+        `Cashfree credentials are not configured.\n` +
+        `INSTRUCTION FOR LLM: Reassure the user that their credentials are saved strictly on their local machine and never sent to any external database. Ask for their Cashfree App ID (TEST...) and Secret Key (from Cashfree Merchant Dashboard -> Developers -> API Keys). Once provided, call 'configure_gateway_credentials' with provider='cashfree', cashfreeAppId, and cashfreeSecretKey.`
+      );
+    }
+    return new CashfreeAdapter(appId, secretKey, false);
+  }
+
+  if (providerName === 'upi') {
+    const vpa = activeProfile.upiVpa || process.env.UPI_VPA;
+    const name = activeProfile.upiName || process.env.UPI_NAME;
+    if (!vpa) {
+      throw new Error(
+        `[ACTION_REQUIRED: MISSING_UPI_VPA]\n` +
+        `UPI ID / VPA is not configured.\n` +
+        `INSTRUCTION FOR LLM: Reassure the user that their UPI ID is stored only in their local config. Direct UPI intent has 0% gateway fees and works across GPay, PhonePe, Paytm, and CRED. Ask for their UPI ID (e.g. yourname@okaxis, 9876543210@ybl) and optional Display Name. Once provided, call 'configure_gateway_credentials' with provider='upi', upiVpa, and upiName.`
+      );
+    }
+    return new UPIAdapter(vpa, name);
   }
 
   if (providerName === 'lemonsqueezy') {
@@ -63,7 +91,7 @@ function getActiveProvider(providerName: PaymentProviderType): PaymentProvider {
       throw new Error(
         `[ACTION_REQUIRED: MISSING_LEMONSQUEEZY_KEYS]\n` +
         `LemonSqueezy credentials are not configured.\n` +
-        `INSTRUCTION FOR LLM: Reassure the user that their API Key and Store ID stay 100% local on their machine. Ask them to share their LemonSqueezy API Key and Store ID. Once provided, call 'configure_gateway_credentials' with provider='lemonsqueezy', lemonApiKey, and lemonStoreId.`
+        `INSTRUCTION FOR LLM: Reassure the user that credentials stay local on their device. Ask for their LemonSqueezy API Key and Store ID. Once provided, call 'configure_gateway_credentials' with provider='lemonsqueezy', lemonApiKey, and lemonStoreId.`
       );
     }
     return new LemonSqueezyAdapter(key, storeId);
@@ -73,10 +101,7 @@ function getActiveProvider(providerName: PaymentProviderType): PaymentProvider {
 }
 
 // -------------------------------------------------------------------
-// 1. Declare All AI Tools (ListTools)
-// -------------------------------------------------------------------
-// -------------------------------------------------------------------
-// 1. Declare All AI Tools (ListTools)
+// 1. ListTools Declaration
 // -------------------------------------------------------------------
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
@@ -84,272 +109,91 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'create_payment_link',
         description:
-          'Generates a secure hosted payment checkout URL across Stripe, Razorpay, or LemonSqueezy. Supports custom transaction amounts, automatic currency formatting, customer prefill metadata (name, email, phone), customizable link expiry timeouts, and intelligent multi-gateway routing. Returns a JSON object containing the checkout URL, payment link ID, status, and assigned gateway provider.',
+          'Generates a payment checkout link or zero-fee NPCI UPI intent URI across Stripe, Razorpay, Cashfree, LemonSqueezy, or direct UPI. Returns the payment URL and QR code data.',
         inputSchema: {
           type: 'object',
           properties: {
             amount: {
               type: 'number',
-              description:
-                'The total transaction amount represented in minor currency units (e.g., 50000 for $500.00 USD or ₹500.00 INR, 1500 for $15.00). Must be a positive integer.',
+              description: 'The transaction amount in minor currency units (e.g., 50000 for ₹500.00 or $500.00).',
             },
             currency: {
               type: 'string',
-              description:
-                'Three-letter ISO 4217 currency code for the charge (e.g., "USD", "INR", "EUR", "GBP"). Defaults to "USD" or profile default if omitted.',
+              description: 'Three-letter ISO currency code (e.g. INR, USD). Defaults to INR.',
             },
             description: {
               type: 'string',
-              description:
-                'Detailed billing description or line item summary presented directly to the customer on the hosted checkout page.',
+              description: 'Payment description or billing note displayed to customer.',
             },
             customerName: {
               type: 'string',
-              description:
-                'Customer full legal or billing name used to automatically prefill checkout contact forms.',
+              description: 'Customer full name to prefill on hosted checkout page.',
             },
             customerPhone: {
               type: 'string',
-              description:
-                'Customer contact phone number with international country calling code (e.g., "+919876543210" or "+14155552671") for SMS delivery and verification.',
+              description: 'Customer phone number (e.g. +919876543210) for SMS notification.',
             },
             customerEmail: {
               type: 'string',
-              description:
-                'Customer email address used for receipt delivery and automatic checkout form prefilling.',
+              description: 'Customer email address for invoice and receipt delivery.',
             },
             expiresInMinutes: {
               type: 'number',
-              description:
-                'Time-to-live expiration window in minutes after which the generated checkout URL automatically expires and rejects payments. Defaults to no expiration if omitted.',
+              description: 'Expiry timeout in minutes after which the link expires.',
             },
+            upiVpa: { type: 'string', description: 'Optional UPI ID / VPA override (e.g. name@okhdfcbank)' },
             provider: {
               type: 'string',
-              enum: ['stripe', 'razorpay', 'lemonsqueezy'],
-              description:
-                'Target payment provider adapter to execute the charge ("stripe" for international credit cards, "razorpay" for Indian domestic UPI/cards/netbanking, "lemonsqueezy" for merchant-of-record digital products). If omitted, smart routing is used.',
+              enum: ['stripe', 'razorpay', 'cashfree', 'upi', 'lemonsqueezy'],
+              description: 'The payment provider: "upi" for 0% fee direct UPI intent, "cashfree" / "razorpay" for Indian PG, "stripe" for global cards.',
             },
             smartRouting: {
               type: 'boolean',
-              description:
-                'When set to true, automatically evaluates the currency and transaction size to route to the lowest fee gateway provider.',
+              description: 'When true, selects the optimal gateway automatically.',
             },
           },
           required: ['amount', 'currency', 'description'],
         },
       },
       {
-        name: 'compare_gateway_fees',
-        description:
-          'Evaluates and compares the transaction processing fees, percentage cuts, fixed interchange fees, and estimated net payouts across Stripe, Razorpay, and LemonSqueezy for a given transaction amount and currency. Returns an itemized fee breakdown for each supported gateway alongside the recommended lowest-cost provider.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            amount: {
-              type: 'number',
-              description:
-                'The gross transaction amount in minor currency units (e.g., 10000 for $100.00 or ₹100.00) to calculate fee deductions against.',
-            },
-            currency: {
-              type: 'string',
-              description:
-                'Three-letter ISO 4217 currency code (e.g., "USD", "INR", "EUR", "GBP") to evaluate currency-specific processing rate tiers.',
-            },
-          },
-          required: ['amount', 'currency'],
-        },
-      },
-      {
-        name: 'trigger_mock_webhook',
-        description:
-          'Constructs and dispatches a cryptographically authentic HMAC-SHA256 signed synthetic webhook event payload directly to a local or remote backend endpoint. Useful for verifying webhook signature parsing, event processing handlers, and local integration pipelines without executing live card charges. Returns the HTTP status code, response headers, and response body received from the target server.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            event: {
-              type: 'string',
-              description:
-                'The standardized webhook event name to emulate (e.g., "payment.captured", "payment.failed", "refund.processed", "payment_intent.succeeded", "charge.refunded").',
-            },
-            provider: {
-              type: 'string',
-              enum: ['razorpay', 'stripe'],
-              description:
-                'The payment gateway whose payload schema, signature format, and HTTP headers will be synthesized ("razorpay" adds "x-razorpay-signature", "stripe" adds "stripe-signature").',
-            },
-            targetUrl: {
-              type: 'string',
-              description:
-                'Fully qualified HTTP or HTTPS destination URL of your backend webhook ingestion endpoint (e.g., "http://localhost:3000/api/webhooks" or "https://api.example.com/webhooks").',
-            },
-            secret: {
-              type: 'string',
-              description:
-                'The shared webhook signing secret used to compute the HMAC-SHA256 signature header. If omitted, the active profile webhook secret is used.',
-            },
-            amount: {
-              type: 'number',
-              description:
-                'Optional minor unit currency amount to inject into the mock payload data body (e.g., 5000 for $50.00). Defaults to 1000 if unspecified.',
-            },
-          },
-          required: ['event', 'provider', 'targetUrl'],
-        },
-      },
-      {
-        name: 'verify_webhook_signature',
-        description:
-          'Validates the cryptographic HMAC-SHA256 signature and tamper-resistance of an incoming webhook HTTP request payload against a shared webhook signing secret. Returns a JSON boolean indicating whether the signature matches the payload digest.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            provider: {
-              type: 'string',
-              enum: ['razorpay', 'stripe'],
-              description:
-                'The originating payment provider determining the signature algorithm ("stripe" parses timestamped t=,v1= signatures; "razorpay" computes standard hex HMAC-SHA256 digests).',
-            },
-            rawPayload: {
-              type: 'string',
-              description:
-                'The exact unparsed UTF-8 raw string body of the incoming HTTP request before any JSON parsing or middleware transformations.',
-            },
-            signature: {
-              type: 'string',
-              description:
-                'The cryptographic signature string extracted from the HTTP request headers ("x-razorpay-signature" for Razorpay, "stripe-signature" for Stripe).',
-            },
-            secret: {
-              type: 'string',
-              description:
-                'The private shared webhook signing secret configured in your provider developer dashboard.',
-            },
-          },
-          required: ['provider', 'rawPayload', 'signature', 'secret'],
-        },
-      },
-      {
-        name: 'get_payment_analytics',
-        description:
-          'Aggregates real-time transaction performance, total gross volume, captured revenue volume, settled payouts, and payment success/conversion rates by querying recent transaction histories across connected payment gateway accounts. Returns statistical aggregates and settlement ratios.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            provider: {
-              type: 'string',
-              enum: ['stripe', 'razorpay', 'lemonsqueezy'],
-              description:
-                'The target payment gateway account from which to fetch charge histories and calculate performance metrics.',
-            },
-            limit: {
-              type: 'number',
-              description:
-                'The maximum number of recent historical transaction records to retrieve and analyze (integer between 1 and 100, default: 50).',
-            },
-          },
-          required: ['provider'],
-        },
-      },
-      {
-        name: 'create_itemized_invoice',
-        description:
-          'Constructs a multi-item commercial invoice checkout link containing itemized product line descriptions, per-unit pricing, item quantities, total tax calculations, and customer billing details. Returns the generated hosted invoice payment URL and itemized receipt breakdown.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            customerEmail: {
-              type: 'string',
-              description:
-                'Customer email address to which the official invoice payment notification and digital itemized receipt will be dispatched.',
-            },
-            currency: {
-              type: 'string',
-              description:
-                'Three-letter ISO 4217 currency code applied across all line items and total invoice settlement (e.g., "USD", "INR", "EUR"). Defaults to "INR".',
-            },
-            items: {
-              type: 'array',
-              description:
-                'Array of structured invoice line items detailing goods or services, unit quantities, and individual unit prices.',
-              items: {
-                type: 'object',
-                properties: {
-                  name: {
-                    type: 'string',
-                    description: 'Descriptive title or name of the individual product, license, or service line item.',
-                  },
-                  quantity: {
-                    type: 'number',
-                    description: 'Total number of units purchased for this line item (positive integer >= 1).',
-                  },
-                  unitAmount: {
-                    type: 'number',
-                    description: 'Price per individual unit specified in minor currency units (e.g., 2500 for $25.00 or ₹25.00).',
-                  },
-                },
-                required: ['name', 'quantity', 'unitAmount'],
-              },
-            },
-            provider: {
-              type: 'string',
-              enum: ['stripe', 'razorpay', 'lemonsqueezy'],
-              description:
-                'Payment gateway adapter used to issue and host the invoice checkout link. If omitted, smart routing selects the optimal gateway based on total invoice volume.',
-            },
-          },
-          required: ['customerEmail', 'items'],
-        },
-      },
-      {
-        name: 'create_refund',
-        description:
-          'Executes an immediate full or partial monetary refund for a previously settled payment or charge transaction across supported payment gateways. Returns a JSON confirmation object containing the refund ID, status, refunded amount, and currency.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            paymentId: {
-              type: 'string',
-              description:
-                'The unique gateway transaction identifier of the charge to refund (e.g., "pay_N1xL5Z81bABCDE" for Razorpay or "ch_3M52pELkdjaWFaKS0ABCDE" / "pi_3M52pE..." for Stripe).',
-            },
-            amount: {
-              type: 'number',
-              description:
-                'Optional minor unit amount to refund for partial reversals (e.g., 2500 for a $25.00 refund on a $100.00 charge). If omitted or null, a full 100% refund of the original payment amount is processed.',
-            },
-            provider: {
-              type: 'string',
-              enum: ['stripe', 'razorpay'],
-              description:
-                'The originating payment provider that processed the initial charge transaction.',
-            },
-          },
-          required: ['paymentId', 'provider'],
-        },
-      },
-      {
         name: 'configure_gateway_credentials',
         description:
-          'Securely saves API keys and credentials for payment gateways directly to the local configuration store on the user machine. Assures complete privacy: credentials are saved strictly in the local environment and are never uploaded or transmitted externally.',
+          'Securely saves API credentials, keys, or UPI VPAs directly to the local configuration store on the user machine. Guarantees complete privacy: values are never sent to external servers or remote databases.',
         inputSchema: {
           type: 'object',
           properties: {
             provider: {
               type: 'string',
-              enum: ['stripe', 'razorpay', 'lemonsqueezy'],
-              description: 'The payment gateway provider to configure locally.',
+              enum: ['stripe', 'razorpay', 'cashfree', 'upi', 'lemonsqueezy'],
+              description: 'The provider to configure locally.',
             },
-            stripeApiKey: {
+            upiVpa: {
               type: 'string',
-              description: 'Stripe secret API key (starts with sk_test_... or sk_live_...).',
+              description: 'User UPI ID / Virtual Payment Address (e.g. user@okaxis, 9876543210@ybl).',
+            },
+            upiName: {
+              type: 'string',
+              description: 'Display name or Business name shown during UPI app checkout.',
+            },
+            cashfreeAppId: {
+              type: 'string',
+              description: 'Cashfree Merchant App ID.',
+            },
+            cashfreeSecretKey: {
+              type: 'string',
+              description: 'Cashfree Secret Key.',
             },
             razorpayKeyId: {
               type: 'string',
-              description: 'Razorpay Key ID (starts with rzp_test_... or rzp_live_...).',
+              description: 'Razorpay Key ID.',
             },
             razorpayKeySecret: {
               type: 'string',
               description: 'Razorpay Key Secret.',
+            },
+            stripeApiKey: {
+              type: 'string',
+              description: 'Stripe Secret API Key (sk_test_...).',
             },
             lemonApiKey: {
               type: 'string',
@@ -362,38 +206,187 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ['provider'],
         },
-      }
+      },
+      {
+        name: 'compare_gateway_fees',
+        description: 'Compare transaction processing fees and net payouts across Cashfree, Razorpay, Stripe, and LemonSqueezy.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            amount: { type: 'number', description: 'Amount in minor units (e.g. 50000)' },
+            currency: { type: 'string', description: 'Currency code (e.g. INR, USD)' },
+          },
+          required: ['amount', 'currency'],
+        },
+      },
+      {
+        name: 'trigger_mock_webhook',
+        description: 'Send a signed mock webhook to a local or remote endpoint.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            event: { type: 'string', description: 'Event name (e.g. payment.captured)' },
+            provider: { type: 'string', enum: ['razorpay', 'stripe', 'cashfree'] },
+            targetUrl: { type: 'string', description: 'Destination HTTP endpoint' },
+            secret: { type: 'string', description: 'Signing secret' },
+            amount: { type: 'number', description: 'Amount in minor units' },
+          },
+          required: ['event', 'provider', 'targetUrl'],
+        },
+      },
+      {
+        name: 'verify_webhook_signature',
+        description: 'Verify HMAC-SHA256 signature of incoming webhooks.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            provider: { type: 'string', enum: ['razorpay', 'stripe', 'cashfree'] },
+            rawPayload: { type: 'string', description: 'Raw body string' },
+            signature: { type: 'string', description: 'Signature header' },
+            secret: { type: 'string', description: 'Signing secret' },
+          },
+          required: ['provider', 'rawPayload', 'signature', 'secret'],
+        },
+      },
+      {
+        name: 'get_payment_analytics',
+        description: 'Retrieve transaction stats and volume.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            provider: { type: 'string', enum: ['stripe', 'razorpay', 'lemonsqueezy', 'cashfree'] },
+            limit: { type: 'number', description: 'Charge count limit' },
+          },
+          required: ['provider'],
+        },
+      },
+      {
+        name: 'create_itemized_invoice',
+        description: 'Generate multi-item invoice link.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            customerEmail: { type: 'string', description: 'Customer email' },
+            currency: { type: 'string', description: 'Currency code' },
+            items: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string' },
+                  quantity: { type: 'number' },
+                  unitAmount: { type: 'number' },
+                },
+                required: ['name', 'quantity', 'unitAmount'],
+              },
+            },
+            provider: { type: 'string', enum: ['stripe', 'razorpay', 'cashfree', 'upi', 'lemonsqueezy'] },
+          },
+          required: ['customerEmail', 'items'],
+        },
+      },
+      {
+        name: 'create_refund',
+        description: 'Issue partial or full refund for a payment ID.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            paymentId: { type: 'string', description: 'Charge / Payment ID' },
+            amount: { type: 'number', description: 'Amount in minor units (optional for full)' },
+            provider: { type: 'string', enum: ['stripe', 'razorpay', 'cashfree'] },
+          },
+          required: ['paymentId', 'provider'],
+        },
+      },
     ],
   };
 });
 
 // -------------------------------------------------------------------
-// 2. Tool Execution Handlers (CallTool)
+// 2. CallTool Request Handler
 // -------------------------------------------------------------------
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   try {
-    // 1. Payment Link Creation with Expiry & Smart Routing
-    if (name === 'create_payment_link') {
-      let provider = args?.provider as PaymentProviderType;
-      if (args?.smartRouting || !provider) {
-        provider = GatewayRouter.recommendProvider(args?.currency as string, args?.amount as number);
+    // 1. Configure Credentials locally
+    if (name === 'configure_gateway_credentials') {
+      const provider = args?.provider as PaymentProviderType;
+      const updates: Record<string, string> = {};
+
+      if (provider === 'upi') {
+        if (!args?.upiVpa) throw new Error('Please provide `upiVpa` (e.g. name@okaxis).');
+        updates.upiVpa = args.upiVpa as string;
+        if (args?.upiName) updates.upiName = args.upiName as string;
+      } else if (provider === 'cashfree') {
+        if (!args?.cashfreeAppId || !args?.cashfreeSecretKey) {
+          throw new Error('Please provide both `cashfreeAppId` and `cashfreeSecretKey`.');
+        }
+        updates.cashfreeAppId = args.cashfreeAppId as string;
+        updates.cashfreeSecretKey = args.cashfreeSecretKey as string;
+      } else if (provider === 'stripe') {
+        if (!args?.stripeApiKey) throw new Error('Please provide `stripeApiKey`.');
+        updates.stripeApiKey = args.stripeApiKey as string;
+      } else if (provider === 'razorpay') {
+        if (!args?.razorpayKeyId || !args?.razorpayKeySecret) {
+          throw new Error('Please provide both `razorpayKeyId` and `razorpayKeySecret`.');
+        }
+        updates.razorpayKeyId = args.razorpayKeyId as string;
+        updates.razorpayKeySecret = args.razorpayKeySecret as string;
+      } else if (provider === 'lemonsqueezy') {
+        if (!args?.lemonApiKey || !args?.lemonStoreId) {
+          throw new Error('Please provide both `lemonApiKey` and `lemonStoreId`.');
+        }
+        updates.lemonApiKey = args.lemonApiKey as string;
+        updates.lemonStoreId = args.lemonStoreId as string;
       }
-      const client = getActiveProvider(provider);
+
+      profileManager.updateProfile(updates);
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              success: true,
+              message: `Successfully saved ${provider} credentials locally. No keys were transmitted to any external database.`,
+            }, null, 2),
+          },
+        ],
+      };
+    }
+
+    // 2. Create Payment Link / UPI Intent
+    if (name === 'create_payment_link') {
+      let provider = (args?.provider as PaymentProviderType) || 'upi';
+      let client: PaymentProvider;
+
+      if (provider === 'upi' && args?.upiVpa) {
+        client = new UPIAdapter(args.upiVpa as string, (args?.customerName as string) || 'Merchant');
+      } else {
+        client = getActiveProvider(provider);
+      }
+
       const res = await client.createPaymentLink({
         amount: args?.amount as number,
         currency: args?.currency as string,
         description: args?.description as string,
-        expiresInMinutes: args?.expiresInMinutes as number | undefined,
-        customerEmail: args?.customerEmail as string | undefined,
       });
+
       return {
-        content: [{ type: 'text', text: JSON.stringify({ ...res, chosenProvider: provider }, null, 2) }],
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              ...res,
+              scannableQrMarkdown: `![UPI QR Code](${res.qrImageUrl})`,
+            }, null, 2),
+          },
+        ],
       };
     }
 
-    // 2. Gateway Fee Comparison
+    // 3. Fee Comparison
     if (name === 'compare_gateway_fees') {
       const estimates = GatewayRouter.compareFees(args?.amount as number, args?.currency as string);
       return {
@@ -401,7 +394,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       };
     }
 
-    // 3. Mock Webhook Trigger
+    // 4. Mock Webhook
     if (name === 'trigger_mock_webhook') {
       const res = await WebhookTrigger.sendMockEvent(
         args?.targetUrl as string,
@@ -415,7 +408,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       };
     }
 
-    // 4. Webhook Signature Verification
+    // 5. Signature Verification
     if (name === 'verify_webhook_signature') {
       let isValid = false;
       if (args?.provider === 'razorpay') {
@@ -428,7 +421,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       };
     }
 
-    // 5. Payment Analytics
+    // 6. Analytics
     if (name === 'get_payment_analytics') {
       const client = getActiveProvider(args?.provider as PaymentProviderType);
       const txns = await client.listTransactions((args?.limit as number) || 50);
@@ -450,12 +443,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       };
     }
 
-    // 6. Itemized Invoice
+    // 7. Itemized Invoice
     if (name === 'create_itemized_invoice') {
       const items = args?.items as Array<{ name: string; quantity: number; unitAmount: number }>;
       const total = items.reduce((acc, i) => acc + (i.quantity * i.unitAmount), 0);
       const desc = items.map((i) => `${i.name} (x${i.quantity})`).join(', ');
-      const provider = (args?.provider as PaymentProviderType) || GatewayRouter.recommendProvider((args?.currency as string) || 'INR', total);
+      const provider = (args?.provider as PaymentProviderType) || 'upi';
       const client = getActiveProvider(provider);
       const res = await client.createPaymentLink({
         amount: total,
@@ -468,7 +461,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       };
     }
 
-    // 7. Refunds
+    // 8. Refund
     if (name === 'create_refund') {
       const client = getActiveProvider(args?.provider as PaymentProviderType);
       const res = await client.createRefund({
@@ -479,45 +472,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         content: [{ type: 'text', text: JSON.stringify(res, null, 2) }],
       };
     }
-
-    if (name === 'configure_gateway_credentials') {
-  const provider = args?.provider as PaymentProviderType;
-  const updates: Record<string, string> = {};
-
-  if (provider === 'stripe') {
-    if (!args?.stripeApiKey) {
-      throw new Error('Please provide the `stripeApiKey` (e.g. sk_test_...).');
-    }
-    updates.stripeApiKey = args.stripeApiKey as string;
-  } else if (provider === 'razorpay') {
-    if (!args?.razorpayKeyId || !args?.razorpayKeySecret) {
-      throw new Error('Please provide both `razorpayKeyId` (rzp_test_...) and `razorpayKeySecret`.');
-    }
-    updates.razorpayKeyId = args.razorpayKeyId as string;
-    updates.razorpayKeySecret = args.razorpayKeySecret as string;
-  } else if (provider === 'lemonsqueezy') {
-    if (!args?.lemonApiKey || !args?.lemonStoreId) {
-      throw new Error('Please provide both `lemonApiKey` and `lemonStoreId`.');
-    }
-    updates.lemonApiKey = args.lemonApiKey as string;
-    updates.lemonStoreId = args.lemonStoreId as string;
-  }
-
-  // Persist directly to local profile config store
-  profileManager.updateProfile(updates);
-
-  return {
-    content: [
-      {
-        type: 'text',
-        text: JSON.stringify({
-          success: true,
-          message: `Successfully configured and saved ${provider} credentials to your local environment. You can now execute payment operations.`,
-        }, null, 2),
-      },
-    ],
-  };
-}
 
     throw new Error(`Tool ${name} not found`);
   } catch (error: any) {
