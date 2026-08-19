@@ -5,10 +5,10 @@
   "maintainers": [
     "pritam825"
   ],
-  "homepage": "https://github.com/pritam825/unified-pay-cli",
+  "homepage": "https://github.com/bhoomikagupta/unified-pay-cli",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pritam825/unified-pay-cli.git"
+    "url": "https://github.com/bhoomikagupta/unified-pay-cli.git"
   },
   "keywords": [
     "payments",
@@ -19,11 +19,18 @@
     "mcp",
     "model-context-protocol"
   ],
+  "related": [
+    "modelcontextprotocol/servers/postgres",
+    "modelcontextprotocol/servers/slack",
+    "modelcontextprotocol/servers/fetch"
+  ],
   "tools": [
     "create_payment_link",
     "compare_gateway_fees",
     "trigger_mock_webhook",
-    "issue_refund",
-    "generate_invoice"
+    "verify_webhook_signature",
+    "get_payment_analytics",
+    "create_itemized_invoice",
+    "create_refund"
   ]
 }
