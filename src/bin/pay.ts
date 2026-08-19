@@ -19,13 +19,16 @@ import { PaymentProviderType } from '../types/PaymentProviderType.js';
 const program = new Command();
 const profileManager = new ProfileManager();
 
-function getActiveProvider(providerName: PaymentProviderType): PaymentProvider {
+// Update getActiveProvider to accept an optional custom VPA override:
+function getActiveProvider(providerName: PaymentProviderType, customVpa?: string): PaymentProvider {
     const activeProfile = profileManager.getProfile();
 
     if (providerName === 'upi') {
-        const vpa = activeProfile.upiVpa || process.env.UPI_VPA;
-        const name = activeProfile.upiName || process.env.UPI_NAME;
-        if (!vpa) throw new Error(`UPI VPA missing. Set via: pay config --upi-vpa <your_vpa@bank> --upi-name "<Name>"`);
+        const vpa = (customVpa || activeProfile.upiVpa || process.env.UPI_VPA)?.trim();
+        const name = activeProfile.upiName || process.env.UPI_NAME || 'Merchant';
+        if (!vpa) {
+            throw new Error(`UPI VPA missing. Provide via '--vpa <id>' or set default via: pay config --upi-vpa <your_vpa@bank>`);
+        }
         return new UPIAdapter(vpa, name);
     }
 
@@ -62,7 +65,7 @@ function getActiveProvider(providerName: PaymentProviderType): PaymentProvider {
 program
     .name('pay')
     .description('Universal Payment Gateway CLI & MCP Engine (UPI, Cashfree, Razorpay, Stripe, LemonSqueezy)')
-    .version('0.4.0');
+    .version('0.1.3');
 
 // -------------------------------------------------------------
 // 1. Config & Profile Switching
@@ -128,6 +131,7 @@ program
     .option('-c, --currency <currency>', 'Currency code (e.g. INR, USD)', 'INR')
     .option('-d, --description <description>', 'Payment description / memo')
     .option('--desc <desc>', 'Alias for description')
+    .option('--vpa <vpa>', 'Custom UPI ID / VPA for this transaction (e.g. name@okaxis)')
     .option('--name <name>', 'Customer name')
     .option('--phone <phone>', 'Customer phone number')
     .option('--email <email>', 'Customer email address')
@@ -140,43 +144,45 @@ program
             let amount = opts.amount;
             let currency = opts.currency || 'INR';
             let desc = opts.description || opts.desc;
+            let vpa = opts.vpa;
             let name = opts.name;
             let email = opts.email;
             let phone = opts.phone;
             let expire = opts.expire;
 
+            const activeProfile = profileManager.getProfile();
+
             if (opts.smart && currency && amount) {
                 provider = GatewayRouter.recommendProvider(currency, amount);
             }
 
-            if (!provider || !amount || !desc) {
-                const answers = await inquirer.prompt([
+            // If using UPI and no VPA is provided or saved, prompt interactively
+            if (provider === 'upi' && !vpa && !activeProfile.upiVpa) {
+                const vpaAnswer = await inquirer.prompt([
                     {
-                        type: 'list',
-                        name: 'provider',
-                        message: 'Select payment provider:',
-                        choices: ['upi', 'cashfree', 'razorpay', 'stripe', 'lemonsqueezy'],
-                        default: 'upi',
-                        when: !provider,
+                        type: 'input',
+                        name: 'vpa',
+                        message: 'Enter your UPI ID / VPA (e.g. username@okhdfcbank):',
+                        validate: (input) => (input.includes('@') ? true : 'Please enter a valid UPI ID with "@"'),
                     },
+                ]);
+                vpa = vpaAnswer.vpa.trim();
+            }
+
+            // Interactive prompts for remaining missing fields
+            if (!amount || !desc) {
+                const answers = await inquirer.prompt([
                     {
                         type: 'number',
                         name: 'amount',
-                        message: 'Enter amount in smallest unit (e.g. 100000 = ₹1,000 / 5000 = $50):',
+                        message: 'Enter amount in smallest unit (e.g. 150000 = ₹1,500):',
                         when: !amount,
-                    },
-                    {
-                        type: 'input',
-                        name: 'currency',
-                        message: 'Currency:',
-                        default: 'INR',
-                        when: !currency,
                     },
                     {
                         type: 'input',
                         name: 'desc',
                         message: 'Payment description:',
-                        default: 'Payment',
+                        default: 'Consultation',
                         when: !desc,
                     },
                     {
@@ -185,30 +191,30 @@ program
                         message: 'Customer Name (optional):',
                         when: !name,
                     },
-                    {
-                        type: 'input',
-                        name: 'phone',
-                        message: 'Customer Mobile (optional, e.g. +919876543210):',
-                        when: !phone,
-                    },
-                    {
-                        type: 'input',
-                        name: 'email',
-                        message: 'Customer Email (optional):',
-                        when: !email,
-                    },
                 ]);
 
-                provider = provider || answers.provider;
                 amount = amount || answers.amount;
-                currency = currency || answers.currency;
                 desc = desc || answers.desc;
                 name = name || answers.name;
-                phone = phone || answers.phone;
-                email = email || answers.email;
             }
 
-            const client = getActiveProvider(provider);
+            // Prompt to save as default if VPA is new or different from stored
+            if (provider === 'upi' && vpa && vpa !== activeProfile.upiVpa) {
+                const { saveDefault } = await inquirer.prompt([
+                    {
+                        type: 'confirm',
+                        name: 'saveDefault',
+                        message: `Would you like to set '${vpa}' as your default UPI ID?`,
+                        default: true,
+                    },
+                ]);
+                if (saveDefault) {
+                    profileManager.updateProfile({ upiVpa: vpa });
+                    console.log(chalk.green(`✔ Saved '${vpa}' as default UPI ID.`));
+                }
+            }
+
+            const client = getActiveProvider(provider, vpa);
             console.log(chalk.blue(`⏳ Generating checkout link / QR on ${chalk.bold(provider)}...`));
 
             const result = await client.createPaymentLink({
@@ -230,13 +236,12 @@ program
                 console.log(`  ${chalk.yellow('Expires:')}       ${new Date(result.expiresAt).toLocaleString()}`);
             }
 
-            // Always render QR code for direct UPI or when --qr flag is passed
             if (provider === 'upi' || opts.qr) {
                 console.log();
                 if (result.qrCodeAscii) {
                     console.log(result.qrCodeAscii);
                 } else {
-                    renderTerminalQR(result.url, `Scan with GPay / PhonePe / Paytm to Pay`);
+                    renderTerminalQR(result.url, 'Scan with GPay / PhonePe / Paytm / CRED to Pay');
                 }
             }
         } catch (err: any) {

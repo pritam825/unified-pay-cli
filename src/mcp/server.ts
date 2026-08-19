@@ -19,7 +19,7 @@ import { PaymentProvider } from '../types/interface/PaymentProvider.js';
 const server = new Server(
   {
     name: 'unified-pay',
-    version: '0.4.0',
+    version: '0.1.3',
   },
   {
     capabilities: {
@@ -357,20 +357,42 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     // 2. Create Payment Link / UPI Intent
+    // Inside CallToolRequestSchema handler in server.ts for create_payment_link:
     if (name === 'create_payment_link') {
       let provider = (args?.provider as PaymentProviderType) || 'upi';
-      let client: PaymentProvider;
+      const activeProfile = profileManager.getProfile();
+      let vpaUsed = activeProfile.upiVpa;
+      let isNewVpa = false;
 
-      if (provider === 'upi' && args?.upiVpa) {
-        client = new UPIAdapter(args.upiVpa as string, (args?.customerName as string) || 'Merchant');
-      } else {
-        client = getActiveProvider(provider);
+      if (provider === 'upi') {
+        if (args?.upiVpa) {
+          vpaUsed = (args.upiVpa as string).trim().toLowerCase();
+          if (vpaUsed !== activeProfile.upiVpa) {
+            isNewVpa = true;
+          }
+        }
+
+        if (!vpaUsed) {
+          throw new Error(
+            `[ACTION_REQUIRED: MISSING_UPI_VPA]\n` +
+            `No default UPI ID is configured and none was provided for this link.\n` +
+            `INSTRUCTION FOR LLM: Ask the user for their UPI ID (e.g. name@okaxis) to generate the QR link. Also ask if they want to save it as their default UPI ID for future links.`
+          );
+        }
       }
+
+      const client = (provider === 'upi')
+        ? new UPIAdapter(vpaUsed!, (args?.customerName as string) || activeProfile.upiName || 'Merchant')
+        : getActiveProvider(provider);
 
       const res = await client.createPaymentLink({
         amount: args?.amount as number,
-        currency: args?.currency as string,
+        currency: (args?.currency as string) || 'INR',
         description: args?.description as string,
+        customerName: args?.customerName as string,
+        customerPhone: args?.customerPhone as string,
+        customerEmail: args?.customerEmail as string,
+        expiresInMinutes: args?.expiresInMinutes as number,
       });
 
       return {
@@ -379,6 +401,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             type: 'text',
             text: JSON.stringify({
               ...res,
+              chosenProvider: provider,
+              vpaUsed,
+              isNewVpa,
+              promptUserToSaveDefault: isNewVpa
+                ? `LLM PROMPT NOTE: This link was generated with custom UPI ID '${vpaUsed}'. Ask the user: "Would you like to set ${vpaUsed} as your default UPI ID for future payment links?" If they confirm, call 'configure_gateway_credentials' with provider='upi' and upiVpa='${vpaUsed}'.`
+                : undefined,
               scannableQrMarkdown: `![UPI QR Code](${res.qrImageUrl})`,
             }, null, 2),
           },
