@@ -5,6 +5,20 @@
   "maintainers": [
     "pritam825"
   ],
+  "homepage": "https://github.com/pritam825/unified-pay-cli",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pritam825/unified-pay-cli.git"
+  },
+  "keywords": [
+    "payments",
+    "stripe",
+    "razorpay",
+    "lemonsqueezy",
+    "fintech",
+    "mcp",
+    "model-context-protocol"
+  ],
   "tools": [
     "create_payment_link",
     "compare_gateway_fees",
