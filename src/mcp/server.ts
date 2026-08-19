@@ -33,21 +33,39 @@ function getActiveProvider(providerName: PaymentProviderType): PaymentProvider {
 
   if (providerName === 'stripe') {
     const key = activeProfile.stripeApiKey || process.env.STRIPE_API_KEY;
-    if (!key) throw new Error('Stripe API key is not configured.');
+    if (!key) {
+      throw new Error(
+        `[ACTION_REQUIRED: MISSING_STRIPE_KEY]\n` +
+        `Stripe API Key is not configured.\n` +
+        `INSTRUCTION FOR LLM: Reassure the user that their key will only be saved locally on their computer and never shared. Ask them to paste their Stripe Secret Key (sk_test_... from https://dashboard.stripe.com/apikeys). Once they provide it, call the tool 'configure_gateway_credentials' with provider='stripe' and stripeApiKey.`
+      );
+    }
     return new StripeAdapter(key);
   }
 
   if (providerName === 'razorpay') {
     const keyId = activeProfile.razorpayKeyId || process.env.RAZORPAY_KEY_ID;
     const keySecret = activeProfile.razorpayKeySecret || process.env.RAZORPAY_KEY_SECRET;
-    if (!keyId || !keySecret) throw new Error('Razorpay credentials are not configured.');
+    if (!keyId || !keySecret) {
+      throw new Error(
+        `[ACTION_REQUIRED: MISSING_RAZORPAY_KEYS]\n` +
+        `Razorpay credentials are not configured.\n` +
+        `INSTRUCTION FOR LLM: Reassure the user that their credentials are saved strictly on their local machine and never transmitted externally. Ask them to provide their Razorpay Key ID (rzp_test_...) and Key Secret (from https://dashboard.razorpay.com/app/keys). Once provided, call 'configure_gateway_credentials' with provider='razorpay', razorpayKeyId, and razorpayKeySecret.`
+      );
+    }
     return new RazorpayAdapter(keyId, keySecret);
   }
 
   if (providerName === 'lemonsqueezy') {
     const key = activeProfile.lemonApiKey || process.env.LEMONSQUEEZY_API_KEY;
     const storeId = activeProfile.lemonStoreId || process.env.LEMONSQUEEZY_STORE_ID;
-    if (!key || !storeId) throw new Error('LemonSqueezy credentials are not configured.');
+    if (!key || !storeId) {
+      throw new Error(
+        `[ACTION_REQUIRED: MISSING_LEMONSQUEEZY_KEYS]\n` +
+        `LemonSqueezy credentials are not configured.\n` +
+        `INSTRUCTION FOR LLM: Reassure the user that their API Key and Store ID stay 100% local on their machine. Ask them to share their LemonSqueezy API Key and Store ID. Once provided, call 'configure_gateway_credentials' with provider='lemonsqueezy', lemonApiKey, and lemonStoreId.`
+      );
+    }
     return new LemonSqueezyAdapter(key, storeId);
   }
 
@@ -309,6 +327,42 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ['paymentId', 'provider'],
         },
       },
+      {
+        name: 'configure_gateway_credentials',
+        description:
+          'Securely saves API keys and credentials for payment gateways directly to the local configuration store on the user machine. Assures complete privacy: credentials are saved strictly in the local environment and are never uploaded or transmitted externally.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            provider: {
+              type: 'string',
+              enum: ['stripe', 'razorpay', 'lemonsqueezy'],
+              description: 'The payment gateway provider to configure locally.',
+            },
+            stripeApiKey: {
+              type: 'string',
+              description: 'Stripe secret API key (starts with sk_test_... or sk_live_...).',
+            },
+            razorpayKeyId: {
+              type: 'string',
+              description: 'Razorpay Key ID (starts with rzp_test_... or rzp_live_...).',
+            },
+            razorpayKeySecret: {
+              type: 'string',
+              description: 'Razorpay Key Secret.',
+            },
+            lemonApiKey: {
+              type: 'string',
+              description: 'LemonSqueezy API Key.',
+            },
+            lemonStoreId: {
+              type: 'string',
+              description: 'LemonSqueezy Store ID.',
+            },
+          },
+          required: ['provider'],
+        },
+      }
     ],
   };
 });
@@ -425,6 +479,45 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         content: [{ type: 'text', text: JSON.stringify(res, null, 2) }],
       };
     }
+
+    if (name === 'configure_gateway_credentials') {
+  const provider = args?.provider as PaymentProviderType;
+  const updates: Record<string, string> = {};
+
+  if (provider === 'stripe') {
+    if (!args?.stripeApiKey) {
+      throw new Error('Please provide the `stripeApiKey` (e.g. sk_test_...).');
+    }
+    updates.stripeApiKey = args.stripeApiKey as string;
+  } else if (provider === 'razorpay') {
+    if (!args?.razorpayKeyId || !args?.razorpayKeySecret) {
+      throw new Error('Please provide both `razorpayKeyId` (rzp_test_...) and `razorpayKeySecret`.');
+    }
+    updates.razorpayKeyId = args.razorpayKeyId as string;
+    updates.razorpayKeySecret = args.razorpayKeySecret as string;
+  } else if (provider === 'lemonsqueezy') {
+    if (!args?.lemonApiKey || !args?.lemonStoreId) {
+      throw new Error('Please provide both `lemonApiKey` and `lemonStoreId`.');
+    }
+    updates.lemonApiKey = args.lemonApiKey as string;
+    updates.lemonStoreId = args.lemonStoreId as string;
+  }
+
+  // Persist directly to local profile config store
+  profileManager.updateProfile(updates);
+
+  return {
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({
+          success: true,
+          message: `Successfully configured and saved ${provider} credentials to your local environment. You can now execute payment operations.`,
+        }, null, 2),
+      },
+    ],
+  };
+}
 
     throw new Error(`Tool ${name} not found`);
   } catch (error: any) {

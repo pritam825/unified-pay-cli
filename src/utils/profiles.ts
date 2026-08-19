@@ -41,6 +41,15 @@ export class ProfileManager {
     this.conf.set('profiles', profiles);
   }
 
+  updateProfile(updates: Partial<ProfileCredentials>): void {
+    const current = this.getProfile();
+    const updated = {
+      ...current,
+      ...updates,
+    };
+    this.saveProfile(updated.name, updated);
+  }
+
   deleteProfile(name: string): boolean {
     if (name === 'default') return false;
     const profiles = (this.conf.get('profiles') as Record<string, ProfileCredentials>) || {};
