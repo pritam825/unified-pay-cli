@@ -1,0 +1,25 @@
+# smithery.yaml
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      stripeApiKey:
+        type: string
+        description: Stripe secret API key (sk_test_...)
+      razorpayKeyId:
+        type: string
+        description: Razorpay Key ID (rzp_test_...)
+      razorpayKeySecret:
+        type: string
+        description: Razorpay Key Secret
+      lemonApiKey:
+        type: string
+        description: LemonSqueezy API Key
+      lemonStoreId:
+        type: string
+        description: LemonSqueezy Store ID
+  commandFunction:
+    package: unified-pay-cli
+    command: npx
+    args: ["-y", "unified-pay-cli@0.1.2"]
