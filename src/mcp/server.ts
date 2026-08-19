@@ -57,51 +57,64 @@ function getActiveProvider(providerName: PaymentProviderType): PaymentProvider {
 // -------------------------------------------------------------------
 // 1. Declare All AI Tools (ListTools)
 // -------------------------------------------------------------------
+// -------------------------------------------------------------------
+// 1. Declare All AI Tools (ListTools)
+// -------------------------------------------------------------------
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
       {
         name: 'create_payment_link',
-        description: 'Generate a hosted payment and checkout link across Stripe, Razorpay, or LemonSqueezy with custom pricing, customer prefill data, and expiration timeouts.',
+        description:
+          'Generates a secure hosted payment checkout URL across Stripe, Razorpay, or LemonSqueezy. Supports custom transaction amounts, automatic currency formatting, customer prefill metadata (name, email, phone), customizable link expiry timeouts, and intelligent multi-gateway routing. Returns a JSON object containing the checkout URL, payment link ID, status, and assigned gateway provider.',
         inputSchema: {
           type: 'object',
           properties: {
             amount: {
               type: 'number',
-              description: 'The transaction amount specified in minor currency units (e.g. 50000 represents 500.00 in the target currency).',
+              description:
+                'The total transaction amount represented in minor currency units (e.g., 50000 for $500.00 USD or ₹500.00 INR, 1500 for $15.00). Must be a positive integer.',
             },
             currency: {
               type: 'string',
-              description: 'Three-letter ISO currency code (e.g. INR, USD, EUR, GBP).',
+              description:
+                'Three-letter ISO 4217 currency code for the charge (e.g., "USD", "INR", "EUR", "GBP"). Defaults to "USD" or profile default if omitted.',
             },
             description: {
               type: 'string',
-              description: 'Item or service description displayed to the customer on the checkout screen.',
+              description:
+                'Detailed billing description or line item summary presented directly to the customer on the hosted checkout page.',
             },
             customerName: {
               type: 'string',
-              description: 'Customer full legal or display name to prefill on the hosted checkout page.',
+              description:
+                'Customer full legal or billing name used to automatically prefill checkout contact forms.',
             },
             customerPhone: {
               type: 'string',
-              description: 'Customer contact phone number including international country code (e.g. +919876543210).',
+              description:
+                'Customer contact phone number with international country calling code (e.g., "+919876543210" or "+14155552671") for SMS delivery and verification.',
             },
             customerEmail: {
               type: 'string',
-              description: 'Customer email address used for prefilling the checkout form and delivering receipts.',
+              description:
+                'Customer email address used for receipt delivery and automatic checkout form prefilling.',
             },
             expiresInMinutes: {
               type: 'number',
-              description: 'Duration in minutes after which the generated checkout URL automatically expires and rejects attempts.',
+              description:
+                'Time-to-live expiration window in minutes after which the generated checkout URL automatically expires and rejects payments. Defaults to no expiration if omitted.',
             },
             provider: {
               type: 'string',
               enum: ['stripe', 'razorpay', 'lemonsqueezy'],
-              description: 'Target payment gateway adapter to process the checkout creation request.',
+              description:
+                'Target payment provider adapter to execute the charge ("stripe" for international credit cards, "razorpay" for Indian domestic UPI/cards/netbanking, "lemonsqueezy" for merchant-of-record digital products). If omitted, smart routing is used.',
             },
             smartRouting: {
               type: 'boolean',
-              description: 'When true, automatically selects the most cost-effective gateway based on currency and transaction size.',
+              description:
+                'When set to true, automatically evaluates the currency and transaction size to route to the lowest fee gateway provider.',
             },
           },
           required: ['amount', 'currency', 'description'],
@@ -109,17 +122,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'compare_gateway_fees',
-        description: 'Calculate and compare transaction processing fees, platform deductions, and net settled payouts across Razorpay, Stripe, and LemonSqueezy.',
+        description:
+          'Evaluates and compares the transaction processing fees, percentage cuts, fixed interchange fees, and estimated net payouts across Stripe, Razorpay, and LemonSqueezy for a given transaction amount and currency. Returns an itemized fee breakdown for each supported gateway alongside the recommended lowest-cost provider.',
         inputSchema: {
           type: 'object',
           properties: {
             amount: {
               type: 'number',
-              description: 'The gross transaction amount in minor currency units (e.g. 50000 for 500.00).',
+              description:
+                'The gross transaction amount in minor currency units (e.g., 10000 for $100.00 or ₹100.00) to calculate fee deductions against.',
             },
             currency: {
               type: 'string',
-              description: 'Three-letter ISO currency code to evaluate interchange and processing fee matrix (e.g. INR, USD, EUR).',
+              description:
+                'Three-letter ISO 4217 currency code (e.g., "USD", "INR", "EUR", "GBP") to evaluate currency-specific processing rate tiers.',
             },
           },
           required: ['amount', 'currency'],
@@ -127,30 +143,36 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'trigger_mock_webhook',
-        description: 'Synthesize and dispatch a cryptographically authentic HMAC-SHA256 signed webhook payload to a local or remote HTTP endpoint for development and testing.',
+        description:
+          'Constructs and dispatches a cryptographically authentic HMAC-SHA256 signed synthetic webhook event payload directly to a local or remote backend endpoint. Useful for verifying webhook signature parsing, event processing handlers, and local integration pipelines without executing live card charges. Returns the HTTP status code, response headers, and response body received from the target server.',
         inputSchema: {
           type: 'object',
           properties: {
             event: {
               type: 'string',
-              description: 'Webhook event type to simulate (e.g. payment.captured, payment.failed, refund.processed, charge.succeeded).',
+              description:
+                'The standardized webhook event name to emulate (e.g., "payment.captured", "payment.failed", "refund.processed", "payment_intent.succeeded", "charge.refunded").',
             },
             provider: {
               type: 'string',
               enum: ['razorpay', 'stripe'],
-              description: 'Payment provider schema and signature algorithm standard to emulate.',
+              description:
+                'The payment gateway whose payload schema, signature format, and HTTP headers will be synthesized ("razorpay" adds "x-razorpay-signature", "stripe" adds "stripe-signature").',
             },
             targetUrl: {
               type: 'string',
-              description: 'Fully qualified HTTP/HTTPS destination URL of your backend webhook handler (e.g. http://localhost:3000/api/webhooks).',
+              description:
+                'Fully qualified HTTP or HTTPS destination URL of your backend webhook ingestion endpoint (e.g., "http://localhost:3000/api/webhooks" or "https://api.example.com/webhooks").',
             },
             secret: {
               type: 'string',
-              description: 'Cryptographic signing secret used to compute and sign the HMAC-SHA256 signature header.',
+              description:
+                'The shared webhook signing secret used to compute the HMAC-SHA256 signature header. If omitted, the active profile webhook secret is used.',
             },
             amount: {
               type: 'number',
-              description: 'Simulated charge amount in minor units to inject into the synthesized event data body.',
+              description:
+                'Optional minor unit currency amount to inject into the mock payload data body (e.g., 5000 for $50.00). Defaults to 1000 if unspecified.',
             },
           },
           required: ['event', 'provider', 'targetUrl'],
@@ -158,26 +180,31 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'verify_webhook_signature',
-        description: 'Verify the cryptographic HMAC-SHA256 authenticity and integrity of an incoming HTTP webhook payload against the provider signature header.',
+        description:
+          'Validates the cryptographic HMAC-SHA256 signature and tamper-resistance of an incoming webhook HTTP request payload against a shared webhook signing secret. Returns a JSON boolean indicating whether the signature matches the payload digest.',
         inputSchema: {
           type: 'object',
           properties: {
             provider: {
               type: 'string',
               enum: ['razorpay', 'stripe'],
-              description: 'Payment provider that dispatched the webhook payload.',
+              description:
+                'The originating payment provider determining the signature algorithm ("stripe" parses timestamped t=,v1= signatures; "razorpay" computes standard hex HMAC-SHA256 digests).',
             },
             rawPayload: {
               type: 'string',
-              description: 'The exact, unparsed raw UTF-8 string body received in the HTTP request.',
+              description:
+                'The exact unparsed UTF-8 raw string body of the incoming HTTP request before any JSON parsing or middleware transformations.',
             },
             signature: {
               type: 'string',
-              description: 'The verification signature header received from the request (e.g. x-razorpay-signature or stripe-signature).',
+              description:
+                'The cryptographic signature string extracted from the HTTP request headers ("x-razorpay-signature" for Razorpay, "stripe-signature" for Stripe).',
             },
             secret: {
               type: 'string',
-              description: 'The configured shared webhook signing secret used to validate payload authenticity.',
+              description:
+                'The private shared webhook signing secret configured in your provider developer dashboard.',
             },
           },
           required: ['provider', 'rawPayload', 'signature', 'secret'],
@@ -185,18 +212,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'get_payment_analytics',
-        description: 'Retrieve real-time transaction performance metrics, aggregate settled revenue, and conversion success rates for a designated gateway.',
+        description:
+          'Aggregates real-time transaction performance, total gross volume, captured revenue volume, settled payouts, and payment success/conversion rates by querying recent transaction histories across connected payment gateway accounts. Returns statistical aggregates and settlement ratios.',
         inputSchema: {
           type: 'object',
           properties: {
             provider: {
               type: 'string',
               enum: ['stripe', 'razorpay', 'lemonsqueezy'],
-              description: 'Payment gateway provider from which to aggregate transaction analytics.',
+              description:
+                'The target payment gateway account from which to fetch charge histories and calculate performance metrics.',
             },
             limit: {
               type: 'number',
-              description: 'Maximum number of recent transaction records to inspect for analytics aggregation (default: 50).',
+              description:
+                'The maximum number of recent historical transaction records to retrieve and analyze (integer between 1 and 100, default: 50).',
             },
           },
           required: ['provider'],
@@ -204,35 +234,39 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'create_itemized_invoice',
-        description: 'Construct an itemized invoice and checkout link with multiple product line items, quantities, and automated tax calculations.',
+        description:
+          'Constructs a multi-item commercial invoice checkout link containing itemized product line descriptions, per-unit pricing, item quantities, total tax calculations, and customer billing details. Returns the generated hosted invoice payment URL and itemized receipt breakdown.',
         inputSchema: {
           type: 'object',
           properties: {
             customerEmail: {
               type: 'string',
-              description: 'Email address of the customer to associate with the invoice and send receipt notifications.',
+              description:
+                'Customer email address to which the official invoice payment notification and digital itemized receipt will be dispatched.',
             },
             currency: {
               type: 'string',
-              description: 'Three-letter ISO currency code for all line items and final settlement (default: INR).',
+              description:
+                'Three-letter ISO 4217 currency code applied across all line items and total invoice settlement (e.g., "USD", "INR", "EUR"). Defaults to "INR".',
             },
             items: {
               type: 'array',
-              description: 'List of individual line items, including product names, unit prices, and quantities.',
+              description:
+                'Array of structured invoice line items detailing goods or services, unit quantities, and individual unit prices.',
               items: {
                 type: 'object',
                 properties: {
                   name: {
                     type: 'string',
-                    description: 'Title or description of the product or service line item.',
+                    description: 'Descriptive title or name of the individual product, license, or service line item.',
                   },
                   quantity: {
                     type: 'number',
-                    description: 'Number of units purchased for this line item.',
+                    description: 'Total number of units purchased for this line item (positive integer >= 1).',
                   },
                   unitAmount: {
                     type: 'number',
-                    description: 'Individual unit price in minor currency units (e.g. 2500 for 25.00).',
+                    description: 'Price per individual unit specified in minor currency units (e.g., 2500 for $25.00 or ₹25.00).',
                   },
                 },
                 required: ['name', 'quantity', 'unitAmount'],
@@ -241,7 +275,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             provider: {
               type: 'string',
               enum: ['stripe', 'razorpay', 'lemonsqueezy'],
-              description: 'Payment provider adapter to generate the itemized invoice checkout link.',
+              description:
+                'Payment gateway adapter used to issue and host the invoice checkout link. If omitted, smart routing selects the optimal gateway based on total invoice volume.',
             },
           },
           required: ['customerEmail', 'items'],
@@ -249,22 +284,26 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'create_refund',
-        description: 'Initiate a full or partial refund for a previously captured charge or payment identifier.',
+        description:
+          'Executes an immediate full or partial monetary refund for a previously settled payment or charge transaction across supported payment gateways. Returns a JSON confirmation object containing the refund ID, status, refunded amount, and currency.',
         inputSchema: {
           type: 'object',
           properties: {
             paymentId: {
               type: 'string',
-              description: 'Unique payment identifier to refund (e.g. pay_N1xL5... for Razorpay or ch_3M5... for Stripe).',
+              description:
+                'The unique gateway transaction identifier of the charge to refund (e.g., "pay_N1xL5Z81bABCDE" for Razorpay or "ch_3M52pELkdjaWFaKS0ABCDE" / "pi_3M52pE..." for Stripe).',
             },
             amount: {
               type: 'number',
-              description: 'Partial refund amount in minor currency units. If omitted, a full refund of the original charge is issued.',
+              description:
+                'Optional minor unit amount to refund for partial reversals (e.g., 2500 for a $25.00 refund on a $100.00 charge). If omitted or null, a full 100% refund of the original payment amount is processed.',
             },
             provider: {
               type: 'string',
               enum: ['stripe', 'razorpay'],
-              description: 'Payment provider that processed the original transaction.',
+              description:
+                'The originating payment provider that processed the initial charge transaction.',
             },
           },
           required: ['paymentId', 'provider'],
