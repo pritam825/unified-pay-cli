@@ -122,20 +122,34 @@ pay listen --port 4242 --secret my_webhook_secret --forward http://localhost:300
 
 Turn your AI assistant into an autonomous billing and payment operator.
 
-### 1. Add to VS Code / GitHub Copilot (`.vscode/mcp.json`)
+### 1. For Claude Desktop (`claude_desktop_config.json`) / Cursor (`mcp.json`)
 
 ```json
 {
   "mcpServers": {
     "unified-pay": {
       "command": "npx",
-      "args": ["-y", "unified-pay-cli", "mcp"]
+      "args": ["-y", "unified-pay-cli"]
     }
   }
 }
 ```
 
-### 2. Available AI Tools
+### 2. For VS Code Copilot (`.vscode/mcp.json`)
+
+```json
+{
+  "servers": {
+    "unified-pay": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "unified-pay-cli"]
+    }
+  }
+}
+```
+
+### 3. Available AI Tools
 
 | Tool Name | Description |
 | --- | --- |
@@ -147,7 +161,7 @@ Turn your AI assistant into an autonomous billing and payment operator.
 | list_refunds | Lists historical refund records. |
 | verify_webhook_signature | Verifies HMAC-SHA256 authenticity of incoming Stripe/Razorpay payloads. |
 
-### 3. Example AI Prompts
+### 4. Example AI Prompts
 
 ```text
 Use unified-pay to generate a INR 3,500 Razorpay payment link for "2-Hour Technical Consultation" and draft a WhatsApp message for the client.
