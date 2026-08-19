@@ -1,7 +1,10 @@
 {
-  "$schema": "https://glama.ai/mcp/glama.schema.json",
+  "$schema": "https://glama.ai/mcp/schemas/server.json",
   "name": "unified-pay-cli",
   "description": "Universal CLI and MCP server for multi-gateway payment orchestration across Stripe, Razorpay, and LemonSqueezy.",
+  "maintainers": [
+    "pritam825"
+  ],
   "tools": [
     "create_payment_link",
     "compare_gateway_fees",
